@@ -1,0 +1,18 @@
+{
+  "tickers": [
+    "TSM",
+    "MSFT",
+    "AAPL",
+    "KER.PA",
+    "NVDA"
+  ],
+  "weights": {
+    "TSM": 10,
+    "MSFT": 25,
+    "AAPL": 30,
+    "KER.PA": 15,
+    "NVDA": 20
+  },
+  "saved_date": "2025-07-27 16:56:59",
+  "version": "1.0"
+}
