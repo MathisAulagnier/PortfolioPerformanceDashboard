@@ -1,1 +1,34 @@
 API.key
+
+# Streamlit secrets (contient les clés API)
+.streamlit/secrets.toml
+
+# Environnement virtuel Python
+venv/
+env/
+.env
+
+# Cache des données financières
+*.cache
+yfinance.cache
+
+# Fichiers temporaires Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Fichiers de logs
+*.log
+
+# Fichiers d'IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Fichiers système macOS
+.DS_Store
+
+# Fichiers de sauvegarde
+*.bak
+*.backup
