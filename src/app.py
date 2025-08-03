@@ -1202,7 +1202,8 @@ else:
 #####
 
 # --- Fonction d'analyse par IA ---
-def generate_portfolio_analysis(portfolio_data, benchmark_data, metrics, advanced_metrics, period, tickers_list, weights):
+def generate_portfolio_analysis(portfolio_data, benchmark_data, metrics, advanced_metrics, period, tickers_list, weights, 
+                               additional_context=None):
     """
     Génère une analyse détaillée du portefeuille via OpenAI GPT.
     
@@ -1214,6 +1215,7 @@ def generate_portfolio_analysis(portfolio_data, benchmark_data, metrics, advance
         period: Période d'analyse sélectionnée
         tickers_list: Liste des tickers du portefeuille
         weights: Dictionnaire des poids du portefeuille
+        additional_context: Contexte supplémentaire (DCA, secteurs, géographie, etc.)
     
     Returns:
         str: Analyse textuelle générée par l'IA
@@ -1223,63 +1225,170 @@ def generate_portfolio_analysis(portfolio_data, benchmark_data, metrics, advance
         from openai import OpenAI
         client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
         
-        # Préparation des données pour l'IA
+        # Récupération d'informations détaillées sur les actifs
+        assets_details = {}
+        total_market_cap = 0
+        for ticker in tickers_list:
+            try:
+                ticker_info = yf.Ticker(ticker).info
+                market_cap = ticker_info.get('marketCap', 0)
+                total_market_cap += market_cap
+                
+                assets_details[ticker] = {
+                    "poids": weights.get(ticker, 0),
+                    "secteur": ticker_info.get('sectorKey', 'Inconnu'),
+                    "industrie": ticker_info.get('industryKey', 'Inconnu'),
+                    "pays": ticker_info.get('country', 'Inconnu'),
+                    "capitalisation": market_cap,
+                    "pe_ratio": ticker_info.get('trailingPE', 'N/A'),
+                    "dividend_yield": ticker_info.get('dividendYield', 0),
+                    "beta_individuel": ticker_info.get('beta', 'N/A'),
+                    "nom_complet": ticker_info.get('longName', ticker)
+                }
+            except:
+                assets_details[ticker] = {
+                    "poids": weights.get(ticker, 0),
+                    "secteur": "Inconnu",
+                    "industrie": "Inconnu", 
+                    "pays": "Inconnu",
+                    "capitalisation": 0,
+                    "pe_ratio": "N/A",
+                    "dividend_yield": 0,
+                    "beta_individuel": "N/A",
+                    "nom_complet": ticker
+                }
+        
+        # Analyse sectorielle et géographique
+        secteurs = {}
+        pays = {}
+        for ticker, details in assets_details.items():
+            secteur = details["secteur"]
+            pays_actif = details["pays"]
+            poids = details["poids"]
+            
+            secteurs[secteur] = secteurs.get(secteur, 0) + poids
+            pays[pays_actif] = pays.get(pays_actif, 0) + poids
+        
+        # Statistiques de drawdown détaillées
+        portfolio_drawdown = calculate_drawdown_series(portfolio_data)
+        drawdown_stats = {}
+        if not portfolio_drawdown.empty:
+            drawdown_stats = {
+                "drawdown_moyen": f"{portfolio_drawdown[portfolio_drawdown < 0].mean():.2%}" if (portfolio_drawdown < 0).any() else "0.00%",
+                "jours_drawdown_5pc": (portfolio_drawdown < -0.05).sum(),
+                "temps_en_drawdown": f"{(portfolio_drawdown < -0.01).sum() / len(portfolio_drawdown) * 100:.1f}%",
+                "nombre_drawdowns_10pc": (portfolio_drawdown < -0.1).sum()
+            }
+        
+        # Préparation des données enrichies pour l'IA
         analysis_data = {
-            "periode": period,
+            "contexte_general": {
+                "periode_analysee": period,
+                "nombre_actifs": len(tickers_list),
+                "date_analyse": datetime.now().strftime("%Y-%m-%d"),
+                "capitalisation_totale_approximative": f"{total_market_cap:,.0f}$" if total_market_cap > 0 else "Non disponible"
+            },
             "portefeuille": {
-                "tickers": tickers_list,
-                "poids": weights,
-                "rendement_total": f"{metrics['portfolio_simple']:.2%}",
-                "rendement_annualise": f"{metrics['portfolio_annual']:.2%}",
-                "volatilite": f"{metrics['portfolio_vol']:.2%}",
-                "sharpe": f"{metrics['portfolio_sharpe']:.2f}",
-                "drawdown_max": f"{metrics['portfolio_drawdown']:.2%}",
-                "sortino": f"{advanced_metrics['sortino_ratio']:.2f}",
-                "alpha": f"{advanced_metrics['alpha']:.2%}",
-                "beta": f"{advanced_metrics['beta']:.2f}"
+                "composition": assets_details,
+                "metriques_performance": {
+                    "rendement_total": f"{metrics['portfolio_simple']:.2%}",
+                    "rendement_annualise": f"{metrics['portfolio_annual']:.2%}",
+                    "volatilite": f"{metrics['portfolio_vol']:.2%}",
+                    "sharpe": f"{metrics['portfolio_sharpe']:.2f}",
+                    "sortino": f"{advanced_metrics['sortino_ratio']:.2f}",
+                    "alpha": f"{advanced_metrics['alpha']:.2%}",
+                    "beta": f"{advanced_metrics['beta']:.2f}",
+                    "drawdown_max": f"{metrics['portfolio_drawdown']:.2%}"
+                },
+                "diversification": {
+                    "repartition_sectorielle": secteurs,
+                    "repartition_geographique": pays,
+                    "concentration_max": f"{max(weights.values()):.1f}%" if weights else "0%",
+                    "nombre_secteurs": len([s for s in secteurs.keys() if s != "Inconnu"]),
+                    "nombre_pays": len([p for p in pays.keys() if p != "Inconnu"])
+                },
+                "statistiques_drawdown": drawdown_stats
             },
             "benchmark": {
-                "rendement_total": f"{metrics['benchmark_total']:.2%}",
-                "rendement_annualise": f"{metrics['benchmark_annual']:.2%}",
-                "volatilite": f"{metrics['benchmark_vol']:.2%}",
-                "sharpe": f"{metrics['benchmark_sharpe']:.2f}",
-                "drawdown_max": f"{metrics['benchmark_drawdown']:.2%}"
+                "type": additional_context.get("benchmark_name", "Indice de référence") if additional_context else "Indice de référence",
+                "metriques": {
+                    "rendement_total": f"{metrics['benchmark_total']:.2%}",
+                    "rendement_annualise": f"{metrics['benchmark_annual']:.2%}",
+                    "volatilite": f"{metrics['benchmark_vol']:.2%}",
+                    "sharpe": f"{metrics['benchmark_sharpe']:.2f}",
+                    "drawdown_max": f"{metrics['benchmark_drawdown']:.2%}"
+                }
             }
         }
         
+        # Ajout du contexte DCA si disponible
+        if additional_context and additional_context.get("dca_enabled"):
+            analysis_data["strategie_investissement"] = {
+                "dca_active": True,
+                "frequence": additional_context.get("dca_frequency", "Mensuelle"),
+                "montant_periodique": f"{additional_context.get('dca_amount', 0):,.0f}$",
+                "capital_initial": f"{additional_context.get('initial_capital', 0):,.0f}$",
+                "total_investi": f"{additional_context.get('total_invested', 0):,.0f}$",
+                "apports_supplementaires": f"{additional_context.get('total_dca_added', 0):,.0f}$"
+            }
+        else:
+            analysis_data["strategie_investissement"] = {
+                "dca_active": False,
+                "capital_initial": f"{additional_context.get('initial_capital', 0):,.0f}$" if additional_context else "Non spécifié"
+            }
+        
+        # Ajout du taux sans risque utilisé
+        if additional_context and 'risk_free_rate' in additional_context:
+            analysis_data["parametres_calcul"] = {
+                "taux_sans_risque": f"{additional_context['risk_free_rate']:.2%}",
+                "source_taux": additional_context.get("risk_free_source", "Manuel")
+            }
+        
         # Prompt détaillé pour l'analyse
         prompt = f"""
-En tant qu'analyste financier expert, analysez ce portefeuille d'investissement sur {period} et fournissez des conseils détaillés.
+En tant qu'analyste financier expert, analysez ce portefeuille d'investissement en utilisant toutes les données détaillées fournies.
 
-DONNÉES DU PORTEFEUILLE:
+DONNÉES COMPLÈTES DU PORTEFEUILLE:
 {json.dumps(analysis_data, indent=2, ensure_ascii=False)}
 
-Veuillez fournir une analyse structurée couvrant:
+Utilisez ces données enrichies pour fournir une analyse approfondie et personnalisée couvrant:
 
 1. **PERFORMANCE GLOBALE** (2-3 paragraphes)
-   - Évaluation de la performance vs benchmark
-   - Points forts et points faibles identifiés
+   - Évaluation détaillée de la performance vs benchmark sur {period}
+   - Analyse de l'efficacité de la stratégie (DCA, allocation, timing)
+   - Points forts et faiblesses par rapport aux objectifs d'investissement
 
-2. **ANALYSE DES RISQUES** (2-3 paragraphes)
-   - Évaluation du couple risque/rendement
-   - Interprétation du drawdown maximal et de la volatilité
-   - Analyse des métriques Sortino, Alpha et Bêta
+2. **ANALYSE DES RISQUES ET DIVERSIFICATION** (3-4 paragraphes)
+   - Évaluation du couple risque/rendement avec métriques Sharpe et Sortino
+   - Analyse approfondie des drawdowns (fréquence, durée, récupération)
+   - Qualité de la diversification sectorielle et géographique
+   - Concentration des positions et risques associés
+   - Analyse du Bêta et de l'Alpha par rapport au benchmark
 
-3. **COMPOSITION DU PORTEFEUILLE** (2 paragraphes)
-   - Analyse de la diversification actuelle
-   - Commentaires sur la répartition des poids
+3. **COMPOSITION ET ALLOCATION** (2-3 paragraphes)
+   - Analyse détaillée de chaque actif (secteur, pays, capitalisation, ratios)
+   - Cohérence de l'allocation sectorielle et géographique
+   - Équilibre entre croissance/défensif, large cap/small cap
+   - Commentaires sur les ratios PE et rendements de dividendes
 
-4. **RECOMMANDATIONS STRATÉGIQUES** (3-4 points concrets)
-   - Suggestions d'amélioration du portefeuille
-   - Recommandations sur la gestion des risques
-   - Conseils pour optimiser le couple risque/rendement
+4. **STRATÉGIE D'INVESTISSEMENT** (2 paragraphes)
+   - Évaluation de la stratégie DCA si applicable (efficacité, timing)
+   - Analyse de l'utilisation du capital et des paramètres de risque
+   - Adéquation avec le profil d'investisseur (horizon, tolérance au risque)
 
-5. **PERSPECTIVES ET ALERTES** (1-2 paragraphes)
-   - Points de vigilance à surveiller
-   - Suggestions pour le suivi futur
+5. **RECOMMANDATIONS STRATÉGIQUES** (4-5 points concrets)
+   - Suggestions d'amélioration de l'allocation sectorielle/géographique
+   - Recommandations sur la gestion des risques et du drawdown
+   - Optimisation de la stratégie DCA si applicable
+   - Conseils pour améliorer le couple risque/rendement
+   - Suggestions de rééquilibrage ou d'ajustements
 
-Adoptez un ton professionnel mais accessible, avec des explications claires pour un investisseur averti.
-Soyez précis et actionnable dans vos recommandations.
+6. **ALERTES ET SURVEILLANCE** (1-2 paragraphes)
+   - Points de vigilance spécifiques aux secteurs/pays exposés
+   - Métriques clés à surveiller régulièrement
+   - Conditions de marché qui pourraient affecter le portefeuille
+
+Utilisez les données détaillées sur chaque actif, la diversification, et les métriques de risque pour fournir des conseils précis et actionnables. Mentionnez spécifiquement les entreprises, secteurs et pays quand c'est pertinent.
 """
 
         # Appel à l'API OpenAI (nouvelle syntaxe)
@@ -1322,6 +1431,30 @@ if st.button("Générer l'Analyse IA", type="primary", help="Génère une analys
             'benchmark_drawdown': b_drawdown
         }
         
+        # Préparation du contexte enrichi pour l'IA
+        benchmark_names = {
+            "^GSPC": "S&P 500", 
+            "^IXIC": "NASDAQ", 
+            "GC=F": "Or", 
+            "DX-Y.NYB": "Dollar Index"
+        }
+        
+        additional_context = {
+            "benchmark_name": benchmark_names.get(benchmark, benchmark),
+            "dca_enabled": dca_enabled,
+            "dca_frequency": dca_frequency if dca_enabled else None,
+            "dca_amount": dca_amount if dca_enabled else 0,
+            "initial_capital": initial_capital,
+            "total_invested": total_invested.iloc[-1] if dca_enabled and not total_invested.empty else initial_capital,
+            "total_dca_added": (total_invested.iloc[-1] - initial_capital) if dca_enabled and not total_invested.empty else 0,
+            "risk_free_rate": risk_free_rate,
+            "risk_free_source": "Automatique (Bons du Trésor US)" if use_auto_rate and auto_risk_free_rate > 0 else "Manuel",
+            "period_start": start_date.strftime("%Y-%m-%d"),
+            "period_end": end_date.strftime("%Y-%m-%d"),
+            "valid_tickers": valid_tickers,
+            "drawdown_series": portfolio_drawdown if not portfolio_drawdown.empty else None
+        }
+        
         # Génération de l'analyse
         ai_analysis = generate_portfolio_analysis(
             portfolio_data=portfolio_value,
@@ -1330,7 +1463,8 @@ if st.button("Générer l'Analyse IA", type="primary", help="Génère une analys
             advanced_metrics=advanced_metrics,
             period=selected_period,
             tickers_list=st.session_state.tickers_list,
-            weights=st.session_state.weights
+            weights=st.session_state.weights,
+            additional_context=additional_context
         )
         
         # Affichage de l'analyse
@@ -1362,6 +1496,8 @@ if st.button("Générer l'Analyse IA", type="primary", help="Génère une analys
         with col3:
             st.info("**Astuce**: Modifiez votre portefeuille ou la période pour obtenir de nouvelles perspectives !")
 
+
+st.markdown("---")
 # Section d'information sur l'IA
 with st.expander("À propos de l'analyse IA"):
     st.markdown("""
@@ -1372,12 +1508,7 @@ with st.expander("À propos de l'analyse IA"):
     - Compare votre portefeuille à l'indice de référence sélectionné
     - Identifie les forces et faiblesses de votre stratégie
     - Propose des recommandations personnalisées
-    
-    **Confidentialité :**
-    - Seules les métriques agrégées sont envoyées (pas de données personnelles)
-    - Aucune information de compte ou transaction n'est partagée
-    - L'analyse est générée en temps réel et n'est pas stockée
-    
+                
     **Coût :**
     - Chaque analyse coûte environ 0,02-0,05$ en crédits OpenAI
     - Le coût dépend de la complexité de votre portefeuille
@@ -1405,6 +1536,3 @@ with st.expander("Guide : Sauvegarde et Chargement de Portefeuilles"):
     **Note :** Les fichiers de portefeuille contiennent uniquement les tickers et leurs poids, 
     pas les données de marché qui sont toujours récupérées en temps réel.
     """)
-
-# Warning sur les coûts API
-st.warning("**Important**: Chaque analyse consomme des crédits OpenAI. Assurez-vous d'avoir configuré votre clé API et surveillez votre usage.")
