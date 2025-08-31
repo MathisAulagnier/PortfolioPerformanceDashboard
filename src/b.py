@@ -724,14 +724,29 @@ def render_monte_carlo():
     if portfolio_returns.empty:
         st.warning("Rendements historiques insuffisants pour la simulation.")
         return
+    # Choix du point de départ de la simulation
+    start_mode = st.radio("Point de départ", ["Valeur actuelle du portefeuille", "Capital initial"], horizontal=True)
+    start_value = float(portfolio_value.iloc[-1]) if start_mode == "Valeur actuelle du portefeuille" else float(initial_capital)
     col_cfg1,col_cfg2,col_cfg3 = st.columns(3)
     with col_cfg1:
         horizon_years = st.slider("Horizon (années)",1,20,10,1)
     with col_cfg2:
         num_simulations = st.select_slider("Simulations", options=[200,500,1000,2000,3000,5000], value=1000)
     with col_cfg3:
-        st.metric("Capital Initial", f"{initial_capital:,.0f}$")
+        st.metric("Valeur de départ utilisée", f"{start_value:,.0f}$")
     assumption_mode = st.radio("Hypothèses", ["Basées sur l'historique","Manuelles"], horizontal=True)
+
+    # Afficher les hypothèses historiques dérivées de la période sélectionnée
+    if assumption_mode == "Basées sur l'historique":
+        trading_days = 252
+        hist_daily_mean = portfolio_returns.mean()
+        hist_daily_vol = portfolio_returns.std()
+        ann_return = (1 + hist_daily_mean) ** trading_days - 1
+        ann_vol = hist_daily_vol * np.sqrt(trading_days)
+        st.caption(f"Hypothèses utilisées → Rendement annuel ≈ {ann_return:.2%}, Volatilité annuelle ≈ {ann_vol:.2%} (basées sur la période: {selected_period})")
+        if abs(ann_return) < 0.01:
+            st.info("Le rendement annualisé historique est proche de 0. Essayez une période plus longue ou passez en mode 'Manuelles' pour tester des hypothèses différentes.")
+
     manual_return=None; manual_vol=None
     if assumption_mode == "Manuelles":
         m1,m2 = st.columns(2)
@@ -741,7 +756,7 @@ def render_monte_carlo():
             manual_vol = st.number_input("Volatilité ann. (%)", 1.0, 100.0, 20.0, 0.5)/100
     if st.button("Lancer la simulation", type="primary"):
         with st.spinner("Simulation en cours..."):
-            simulations_df = run_monte_carlo_simulation(portfolio_returns.squeeze(), horizon_years, initial_capital, num_simulations, manual_return, manual_vol)
+            simulations_df = run_monte_carlo_simulation(portfolio_returns.squeeze(), horizon_years, start_value, num_simulations, manual_return, manual_vol)
         if simulations_df.empty:
             st.error("Simulation impossible.")
             return
@@ -761,14 +776,14 @@ def render_monte_carlo():
         st.plotly_chart(fig_mc, use_container_width=True)
         final_values = simulations_df.iloc[-1]
         p5_val = final_values.quantile(0.05); p50_val = final_values.quantile(0.50); p95_val = final_values.quantile(0.95); mean_val = final_values.mean()
-        cagr_median = (p50_val/initial_capital)**(1/horizon_years)-1; cagr_mean = (mean_val/initial_capital)**(1/horizon_years)-1
+        cagr_median = (p50_val/start_value)**(1/horizon_years)-1; cagr_mean = (mean_val/start_value)**(1/horizon_years)-1
         m1,m2,m3,m4 = st.columns(4)
         m1.metric("Pessimiste (5%)", f"{p5_val:,.0f}$")
         m2.metric("Médiane", f"{p50_val:,.0f}$", f"CAGR {cagr_median:.2%}")
         m3.metric("Optimiste (95%)", f"{p95_val:,.0f}$")
         m4.metric("Moyenne", f"{mean_val:,.0f}$", f"CAGR {cagr_mean:.2%}")
         st.markdown("### Probabilité d'Atteindre un Objectif")
-        target_value = st.number_input("Objectif ($)", min_value=0, value=int(initial_capital*2), step=1000)
+        target_value = st.number_input("Objectif ($)", min_value=0, value=int(start_value*2), step=1000)
         if target_value>0:
             prob_target = (final_values>=target_value).mean()
             st.info(f"Probabilité d'atteindre {target_value:,.0f}$ : **{prob_target:.1%}**")
