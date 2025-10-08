@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
-import yfinance as yf
+
 import streamlit as st
+import yfinance as yf
+
 from calculations import calculate_drawdown_series
 
 
@@ -47,13 +49,17 @@ def generate_portfolio_analysis(
         secteurs: dict[str, float] = {}
         pays: dict[str, float] = {}
         for _, d in assets_details.items():
-            secteurs[str(d["secteur"])] = secteurs.get(str(d["secteur"]), 0) + d["poids"]
-            pays[str(d["pays"])] = pays.get(str(d["pays"]), 0) + d["poids"]
+            # use float(str(...)) to make mypy happy if poids is typed as object
+            poids_val = float(str(d.get("poids", 0)))
+            secteurs[str(d["secteur"])] = secteurs.get(str(d["secteur"]), 0.0) + poids_val
+            pays[str(d["pays"])] = pays.get(str(d["pays"]), 0.0) + poids_val
 
         drawdown_series = calculate_drawdown_series(portfolio_value)
         drawdown_stats = {}
         if not drawdown_series.empty:
-            dd_moy = drawdown_series[drawdown_series < 0].mean() if (drawdown_series < 0).any() else 0
+            dd_moy = (
+                drawdown_series[drawdown_series < 0].mean() if (drawdown_series < 0).any() else 0
+            )
             drawdown_stats = {"drawdown_moyen": f"{dd_moy:.2%}"}
 
         analysis_data = {
