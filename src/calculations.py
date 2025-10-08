@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import streamlit as st
 from dateutil.relativedelta import relativedelta
 
 
+@st.cache_data
 def calculate_dca_portfolio(
     returns: pd.DataFrame | pd.Series,
     weights: list[float] | float,
@@ -66,6 +68,7 @@ def calculate_dca_portfolio(
     return portfolio_value, total_invested, portfolio_returns
 
 
+@st.cache_data
 def calculate_metrics_with_dca(
     portfolio_returns: pd.Series,
     portfolio_value: pd.Series,
@@ -92,6 +95,7 @@ def calculate_metrics_with_dca(
     )
 
 
+@st.cache_data
 def calculate_advanced_metrics(
     portfolio_returns: pd.Series,
     benchmark_returns: pd.Series,
@@ -136,6 +140,7 @@ def calculate_max_drawdown(portfolio_value: pd.Series) -> float:
     return float(calculate_drawdown_series(portfolio_value).min())
 
 
+@st.cache_data
 def calculate_holding_period_analysis(
     portfolio_returns: pd.Series, max_horizon_years: int = 20
 ) -> dict:

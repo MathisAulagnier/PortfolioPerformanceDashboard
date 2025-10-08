@@ -35,3 +35,18 @@ def get_risk_free_rate() -> float:
         return 0.0
     except Exception:
         return 0.0
+
+
+@st.cache_data(ttl=3600)
+def get_ticker_info(ticker: str) -> dict:
+    """Récupère et met en cache les informations d'un ticker via yfinance.
+
+    Retourne un dictionnaire vide si une erreur survient.
+    """
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info or {}
+        # Convertir en dict standard (au cas où yfinance retourne un objet spécial)
+        return dict(info)
+    except Exception:
+        return {}

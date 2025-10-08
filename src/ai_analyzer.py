@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 
 import streamlit as st
-import yfinance as yf
 
 from calculations import calculate_drawdown_series
+from data_manager import get_ticker_info
 
 
 def generate_portfolio_analysis(
@@ -21,30 +22,32 @@ def generate_portfolio_analysis(
     try:
         from openai import OpenAI
 
-        api_key = st.secrets.get("OPENAI_API_KEY")
-        print(f"Clé API chargée : {api_key is not None}")
-        client = OpenAI(api_key=api_key)
+        @st.cache_data(ttl=3600)
+        def get_openai_client(key: str):
+            return OpenAI(api_key=key)
+
+        api_key = None
+        try:
+            api_key = st.secrets.get("OPENAI_API_KEY") if hasattr(st, "secrets") else None
+        except Exception:
+            api_key = None
+        if not api_key:
+            api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OpenAI API key not set")
+        client = get_openai_client(api_key)
 
         assets_details = {}
         for ticker in tickers_list:
-            try:
-                info = yf.Ticker(ticker).info
-                mc = info.get("marketCap", 0) or 0
-                assets_details[ticker] = {
-                    "poids": float(weights.get(ticker, 0)),
-                    "secteur": str(info.get("sectorKey", "Inconnu")),
-                    "industrie": str(info.get("industryKey", "Inconnu")),
-                    "pays": str(info.get("country", "Inconnu")),
-                    "capitalisation": int(mc),
-                }
-            except Exception:
-                assets_details[ticker] = {
-                    "poids": float(weights.get(ticker, 0)),
-                    "secteur": "Inconnu",
-                    "industrie": "Inconnu",
-                    "pays": "Inconnu",
-                    "capitalisation": 0,
-                }
+            info = get_ticker_info(ticker)
+            mc = info.get("marketCap", 0) or 0
+            assets_details[ticker] = {
+                "poids": float(weights.get(ticker, 0)),
+                "secteur": str(info.get("sectorKey", "Inconnu")),
+                "industrie": str(info.get("industryKey", "Inconnu")),
+                "pays": str(info.get("country", "Inconnu")),
+                "capitalisation": int(mc) if mc else 0,
+            }
 
         secteurs: dict[str, float] = {}
         pays: dict[str, float] = {}

@@ -22,7 +22,7 @@ from calculations import (
 )
 
 # Modules maison
-from data_manager import get_data, get_risk_free_rate
+from data_manager import get_data, get_risk_free_rate, get_ticker_info
 
 # --- Configuration de la page ---
 st.set_page_config(layout="wide", page_title="Dashboard de Backtesting")
@@ -53,14 +53,24 @@ if "themes" not in ms:
         },
     }
 
+# Appliquer le thème initial une seule fois au démarrage (force sombre si configuré)
+if "theme_applied" not in ms:
+    ms.theme_applied = True
+    # Déterminer quel dictionnaire utiliser (la clé 'current_theme' est contrôlée par l'app)
+    chosen = ms.themes.get("current_theme", "light")
+    tdict = ms.themes.get(chosen, {})
+    for vkey, vval in tdict.items():
+        if vkey.startswith("theme"):
+            try:
+                st._config.set_option(vkey, vval)
+            except Exception:
+                # Ne pas planter l'app si une option n'est pas disponible
+                pass
+
 
 def ChangeTheme():
     previous_theme = ms.themes["current_theme"]
-    tdict = (
-        ms.themes["light"]
-        if ms.themes["current_theme"] == "light"
-        else ms.themes["dark"]
-    )
+    tdict = ms.themes["light"] if ms.themes["current_theme"] == "light" else ms.themes["dark"]
     for vkey, vval in tdict.items():
         if vkey.startswith("theme"):
             st._config.set_option(vkey, vval)
@@ -108,7 +118,10 @@ with st.sidebar.form("ticker_form", clear_on_submit=True):
     if submitted and new_ticker_input:
         ticker_to_add = new_ticker_input.strip().upper()
         if ticker_to_add not in st.session_state.tickers_list:
-            test_data = yf.Ticker(ticker_to_add).history(period="1mo")
+            # Utiliser get_data (mis en cache) pour valider rapidement le ticker
+            test_start = datetime.now() - relativedelta(months=1)
+            test_end = datetime.now()
+            test_data = get_data([ticker_to_add], test_start, test_end)
             if test_data.empty:
                 st.sidebar.error(f"Ticker '{ticker_to_add}' invalide ou sans données.")
             else:
@@ -188,8 +201,10 @@ if uploaded_file is not None and not st.session_state.portfolio_loaded:
 
             for ticker in uploaded_portfolio["tickers"]:
                 try:
-                    # Test rapide pour vérifier que le ticker existe encore
-                    test_data = yf.Ticker(ticker).history(period="5d")
+                    # Test rapide via get_data mis en cache
+                    test_start = datetime.now() - relativedelta(days=5)
+                    test_end = datetime.now()
+                    test_data = get_data([ticker], test_start, test_end)
                     if not test_data.empty:
                         valid_tickers.append(ticker)
                         valid_weights[ticker] = uploaded_portfolio["weights"].get(ticker, 0)
@@ -474,7 +489,7 @@ def render_overview():
         yaxis_title="Valeur ($)",
         hovermode="x unified",
     )
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, use_container_width=True)
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Rendement Total", f"{p_simple:.2%}")
     col2.metric("Rendement Annualisé", f"{p_annual:.2%}")
@@ -504,14 +519,12 @@ def render_performance_risks():
         if st.button(
             "Évolution du Drawdown",
             type="primary" if st.session_state.analysis_type == "drawdown" else "secondary",
-            width="stretch",
         ):
             st.session_state.analysis_type = "drawdown"
     with colB:
         if st.button(
             "Horizon de Placement",
             type="primary" if st.session_state.analysis_type == "horizon" else "secondary",
-            width="stretch",
         ):
             st.session_state.analysis_type = "horizon"
     if st.session_state.analysis_type == "drawdown":
@@ -557,7 +570,7 @@ def render_performance_risks():
             st.info(
                 f"Drawdown max {max_dd_val:.2%} le {max_dd_date.strftime('%d/%m/%Y')}{recovery_info}"
             )
-            st.plotly_chart(fig_dd, width="stretch")
+            st.plotly_chart(fig_dd, use_container_width=True)
             c1, c2, c3, c4 = st.columns(4)
             avg_dd = dd_port[dd_port < 0].mean() if (dd_port < 0).any() else 0
             with c1:
@@ -617,7 +630,7 @@ def render_performance_risks():
                 yaxis_title="Probabilité (%)",
                 yaxis=dict(range=[0, 105]),
             )
-            st.plotly_chart(fig_h, width="stretch")
+            st.plotly_chart(fig_h, use_container_width=True)
         else:
             st.warning("Période insuffisante pour analyser l'horizon.")
     st.markdown("---")
@@ -662,23 +675,21 @@ def render_performance_risks():
                 xaxis_title=f"{benchmark} (%)",
                 yaxis_title="Portefeuille (%)",
             )
-            st.plotly_chart(fig_reg, width="stretch")
+            st.plotly_chart(fig_reg, use_container_width=True)
 
 
 def render_allocation_diversification():
     st.subheader("Allocation & Diversification")
     # Géographie
     geo_data = []
+    # Précharger les infos des tickers une seule fois (mise en cache par get_ticker_info)
+    info_map = {t: get_ticker_info(t) for t in valid_tickers}
     for _t in valid_tickers:
-        try:
-            info = yf.Ticker(_t).info
-            country = info.get("country", "Inconnu")
-            geo_data.append(
-                {"Ticker": _t, "Country": country, "Weight": st.session_state.weights.get(_t, 0)}
-            )
-        except Exception:
-            # ignore per-ticker failures
-            continue
+        info = info_map.get(_t, {})
+        country = info.get("country", "Inconnu")
+        geo_data.append(
+            {"Ticker": _t, "Country": country, "Weight": st.session_state.weights.get(_t, 0)}
+        )
     geo_df = pd.DataFrame(geo_data)
     if not geo_df.empty:
         geo_df = geo_df.groupby("Country").agg({"Weight": "sum"}).reset_index()
@@ -688,7 +699,7 @@ def render_allocation_diversification():
         with gc1:
             fig_geo = px.pie(geo_df, names="Country", values="Weight", title="Répartition par Pays")
             fig_geo.update_traces(textposition="inside", textinfo="percent+label")
-            st.plotly_chart(fig_geo, width="stretch")
+            st.plotly_chart(fig_geo, use_container_width=True)
         with gc2:
             # list of conflict countries (kept for documentation) -- not used programmatically
             # Try to map country names to ISO-3 codes to avoid future locationmode issues.
@@ -731,7 +742,7 @@ def render_allocation_diversification():
                     color_continuous_scale=px.colors.sequential.Plasma,
                 )
             # Ajout visuel des zones de conflit (indicatif)
-            st.plotly_chart(fig_map, width="stretch")
+            st.plotly_chart(fig_map, use_container_width=True)
     else:
         st.info("Pas de données géographiques disponibles.")
 
@@ -740,29 +751,21 @@ def render_allocation_diversification():
     sector_data = []
     industry_data = []
     for t in valid_tickers:
-        try:
-            info = yf.Ticker(t).info
-            sector_data.append(
-                {
-                    "Ticker": t,
-                    "Sector": info.get("sectorKey", "Inconnu"),
-                    "Weight": st.session_state.weights.get(t, 0),
-                }
-            )
-            industry_data.append(
-                {
-                    "Ticker": t,
-                    "Industry": info.get("industryKey", "Inconnu"),
-                    "Weight": st.session_state.weights.get(t, 0),
-                }
-            )
-        except Exception:
-            sector_data.append(
-                {"Ticker": t, "Sector": "Inconnu", "Weight": st.session_state.weights.get(t, 0)}
-            )
-            industry_data.append(
-                {"Ticker": t, "Industry": "Inconnu", "Weight": st.session_state.weights.get(t, 0)}
-            )
+        info = info_map.get(t, {})
+        sector_data.append(
+            {
+                "Ticker": t,
+                "Sector": info.get("sectorKey", "Inconnu"),
+                "Weight": st.session_state.weights.get(t, 0),
+            }
+        )
+        industry_data.append(
+            {
+                "Ticker": t,
+                "Industry": info.get("industryKey", "Inconnu"),
+                "Weight": st.session_state.weights.get(t, 0),
+            }
+        )
 
     if sector_data:
         sector_df = pd.DataFrame(sector_data)
@@ -796,7 +799,7 @@ def render_allocation_diversification():
                 hover_data=["Ticker"],
             )
             fig_sector.update_traces(textposition="inside", textinfo="percent+label")
-            st.plotly_chart(fig_sector, width="stretch")
+            st.plotly_chart(fig_sector, use_container_width=True)
         with sc2:
             fig_industry = px.pie(
                 industry_summary,
@@ -806,14 +809,14 @@ def render_allocation_diversification():
                 hover_data=["Ticker"],
             )
             fig_industry.update_traces(textposition="inside", textinfo="percent+label")
-            st.plotly_chart(fig_industry, width="stretch")
+            st.plotly_chart(fig_industry, use_container_width=True)
     if not sector_summary.empty:
         st.markdown("#### Détails Secteurs")
         display = sector_summary.rename(
             columns={"Sector": "Secteur", "Weight": "Poids (%)", "Ticker": "Tickers"}
         ).copy()
         display["Poids (%)"] = display["Poids (%)"].apply(lambda x: f"{x:.1f}%")
-        st.dataframe(display, width="stretch", hide_index=True)
+        st.dataframe(display, use_container_width=True, hide_index=True)
         num_sectors = len(sector_summary)
         max_sector_weight = sector_summary["Weight"].max()
         dominant_sector = sector_summary.loc[sector_summary["Weight"].idxmax(), "Sector"]
@@ -998,7 +1001,7 @@ def render_monte_carlo():
             yaxis_title="Valeur ($)",
             hovermode="x unified",
         )
-        st.plotly_chart(fig_mc, width="stretch")
+        st.plotly_chart(fig_mc, use_container_width=True)
         final_values = simulations_df.iloc[-1]
         p5_val = final_values.quantile(0.05)
         p50_val = final_values.quantile(0.50)
@@ -1034,7 +1037,7 @@ def render_monte_carlo():
             hist_fig.add_vline(x=mean_val, line_dash="dash", line_color="blue")
             hist_fig.add_vline(x=p50_val, line_dash="dot", line_color="black")
             hist_fig.add_vrect(x0=p5_val, x1=p95_val, fillcolor="green", opacity=0.08, line_width=0)
-            st.plotly_chart(hist_fig, width="stretch")
+            st.plotly_chart(hist_fig, use_container_width=True)
         with st.expander("Méthodologie & Interprétation"):
             st.markdown(
                 """Simulation Monte-Carlo via GBM (rendements log-normaux, volatilité constante). Limites: pas de régimes de marché, pas de queues grasses, volatilité non conditionnelle."""
