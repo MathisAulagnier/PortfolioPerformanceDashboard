@@ -1,0 +1,14 @@
+[theme]
+base = "light"
+primaryColor = "#4B8BBE"
+secondaryBackgroundColor = "#F7F7F9"
+textColor = "#0E1117"
+
+[server]
+headless = true
+enableCORS = true
+enableXsrfProtection = false
+maxUploadSize = 200
+
+[client]
+toolbarMode = "viewer"

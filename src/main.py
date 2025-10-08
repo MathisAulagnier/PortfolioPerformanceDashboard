@@ -12,6 +12,20 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 import json
+import os
+from typing import Any
+
+# Modules maison
+from data_manager import get_data, get_risk_free_rate
+from calculations import (
+    calculate_dca_portfolio,
+    calculate_metrics_with_dca,
+    calculate_advanced_metrics,
+    calculate_drawdown_series,
+    calculate_max_drawdown,
+    calculate_holding_period_analysis,
+)
+from ai_analyzer import generate_portfolio_analysis as generate_ai_analysis
 
 
 # --- Configuration de la page ---
@@ -20,161 +34,7 @@ st.set_page_config(
     page_title="Dashboard de Backtesting"
 )
 
-# --- Fonctions de calcul améliorées ---
-
-@st.cache_data
-def get_data(tickers, start, end):
-    """Télécharge les données 'Close' pour une liste de tickers et les met en cache."""
-    try:
-        data = yf.download(tickers, start=start, end=end, progress=False)['Close']
-        # Si un seul ticker est demandé, yf.download renvoie une Series, on la convertit en DataFrame
-        if isinstance(data, pd.Series):
-            data = data.to_frame(name=tickers[0])
-        return data.dropna(how='all')
-    except Exception as e:
-        st.error(f"Erreur lors du téléchargement des données : {e}")
-        return pd.DataFrame()
-
-@st.cache_data(ttl=3600)  # Cache pendant 1 heure
-def get_risk_free_rate():
-    """
-    Récupère le taux sans risque actuel (bons du Trésor américain 13 semaines).
-    
-    Returns:
-        float: Taux sans risque annuel en décimal (ex: 0.05 pour 5%)
-    """
-    try:
-        treasury_data = yf.download("^IRX", period="5d", progress=False)
-        if not treasury_data.empty and 'Close' in treasury_data.columns:
-            latest_rate = treasury_data['Close'].iloc[-1] / 100.0
-            return float(latest_rate)
-        else:
-            return 0.0
-    except Exception:
-        return 0.0
-
-def calculate_dca_portfolio(returns, weights, initial_capital, dca_enabled, dca_amount, dca_frequency):
-    """Calcule l'évolution du portefeuille avec ou sans DCA."""
-    if returns.empty:
-        return pd.Series(), pd.Series(), pd.Series()
-    portfolio_returns = (returns * weights).sum(axis=1)
-    portfolio_value = pd.Series(index=returns.index, dtype=float)
-    total_invested = pd.Series(index=returns.index, dtype=float)
-    current_value = initial_capital
-    cumulative_invested = initial_capital
-    portfolio_value.iloc[0] = current_value
-    total_invested.iloc[0] = cumulative_invested
-    if dca_enabled:
-        dca_dates = set()
-        current_date = returns.index[0]
-        end_date = returns.index[-1]
-        while current_date <= end_date:
-            available_dates = returns.index[returns.index >= current_date]
-            if len(available_dates) > 0:
-                dca_dates.add(available_dates[0])
-            current_date += relativedelta(months=1) if dca_frequency == 'Mensuelle' else relativedelta(years=1)
-    for i in range(1, len(returns)):
-        date = returns.index[i]
-        daily_return = portfolio_returns.iloc[i]
-        if dca_enabled and date in dca_dates:
-            current_value += dca_amount
-            cumulative_invested += dca_amount
-        current_value *= (1 + daily_return)
-        portfolio_value.iloc[i] = current_value
-        total_invested.iloc[i] = cumulative_invested
-    return portfolio_value, total_invested, portfolio_returns
-
-def calculate_metrics_with_dca(portfolio_returns, portfolio_value, total_invested, risk_free_rate=0.0):
-    if portfolio_returns.empty or portfolio_returns.isnull().all():
-        return 0, 0, 0, 0, 0
-    simple_return = (portfolio_value.iloc[-1] / total_invested.iloc[-1]) - 1
-    twr = (1 + portfolio_returns).prod() - 1
-    num_days = len(portfolio_returns)
-    if num_days == 0:
-        return 0, 0, 0, 0, 0
-    annualized_return = ((1 + twr) ** (252 / num_days)) - 1
-    volatility = portfolio_returns.std() * np.sqrt(252)
-    sharpe_ratio = (annualized_return - risk_free_rate) / (volatility + 1e-10)
-    return simple_return, annualized_return, volatility, sharpe_ratio, twr
-
-def calculate_advanced_metrics(portfolio_returns, benchmark_returns, risk_free_rate=0.0):
-    if portfolio_returns.empty or benchmark_returns.empty:
-        return {'sortino_ratio': 0, 'alpha': 0, 'beta': 0}
-    aligned_data = pd.concat([portfolio_returns, benchmark_returns], axis=1, join='inner').dropna()
-    if aligned_data.empty or len(aligned_data.columns) < 2:
-        return {'sortino_ratio': 0, 'alpha': 0, 'beta': 0}
-    portfolio_aligned = aligned_data.iloc[:, 0]
-    benchmark_aligned = aligned_data.iloc[:, 1]
-    daily_risk_free = risk_free_rate / 252
-    negative_returns = portfolio_aligned[portfolio_aligned < daily_risk_free] - daily_risk_free
-    downside_deviation = negative_returns.std() * np.sqrt(252) if len(negative_returns) > 0 else 1e-10
-    portfolio_annual_return = ((1 + portfolio_aligned.mean()) ** 252) - 1
-    sortino_ratio = (portfolio_annual_return - risk_free_rate) / downside_deviation
-    if benchmark_aligned.var() > 1e-10:
-        covariance = np.cov(portfolio_aligned, benchmark_aligned)[0, 1]
-        benchmark_variance = benchmark_aligned.var()
-        beta = covariance / benchmark_variance
-    else:
-        beta = 0
-    benchmark_annual_return = ((1 + benchmark_aligned.mean()) ** 252) - 1
-    alpha = portfolio_annual_return - (risk_free_rate + beta * (benchmark_annual_return - risk_free_rate))
-    return {'sortino_ratio': sortino_ratio, 'alpha': alpha, 'beta': beta}
-
-def calculate_drawdown_series(portfolio_value):
-    if portfolio_value.empty or portfolio_value.isnull().all():
-        return pd.Series()
-    peak = portfolio_value.expanding(min_periods=1).max()
-    return (portfolio_value / peak) - 1
-
-def calculate_max_drawdown(portfolio_value):
-    if portfolio_value.empty or portfolio_value.isnull().all():
-        return 0
-    return calculate_drawdown_series(portfolio_value).min()
-
-def calculate_holding_period_analysis(portfolio_returns, max_horizon_years=20):
-    if portfolio_returns.empty or len(portfolio_returns) < 252:
-        return {}
-    results = {}
-    cumulative_returns = (1 + portfolio_returns).cumprod()
-    horizons = []
-    for months in [6, 12, 18, 24, 30, 36]:
-        if months <= max_horizon_years * 12:
-            horizons.append((months / 12, f"{months}m"))
-    for years in range(4, max_horizon_years + 1):
-        horizons.append((years, f"{years}a"))
-    for horizon_years, label in horizons:
-        horizon_days = int(horizon_years * 252)
-        if horizon_days >= len(cumulative_returns):
-            continue
-        period_returns = []
-        for i in range(len(cumulative_returns) - horizon_days):
-            start_value = cumulative_returns.iloc[i]
-            end_value = cumulative_returns.iloc[i + horizon_days]
-            period_returns.append((end_value / start_value) - 1)
-        if not period_returns:
-            continue
-        period_returns = np.array(period_returns)
-        positive_returns = period_returns[period_returns > 0]
-        probability_positive = len(positive_returns) / len(period_returns) * 100
-        avg_return = np.mean(period_returns)
-        avg_positive_return = np.mean(positive_returns) if len(positive_returns) > 0 else 0
-        avg_negative_return = np.mean(period_returns[period_returns <= 0]) if np.any(period_returns <= 0) else 0
-        percentile_10 = np.percentile(period_returns, 10)
-        percentile_90 = np.percentile(period_returns, 90)
-        median_return = np.median(period_returns)
-        results[horizon_years] = {
-            'label': label,
-            'probability_positive': probability_positive,
-            'avg_return': avg_return,
-            'median_return': median_return,
-            'avg_positive_return': avg_positive_return,
-            'avg_negative_return': avg_negative_return,
-            'percentile_10': percentile_10,
-            'percentile_90': percentile_90,
-            'num_periods': len(period_returns),
-            'annualized_avg_return': ((1 + avg_return) ** (1/horizon_years)) - 1 if horizon_years > 0 else avg_return
-        }
-    return results
+# --- Fonctions externalisées (voir modules importés ci-dessus) ---
 
 # --- Barre Latérale (Sidebar) pour tous les contrôles ---
 
@@ -496,7 +356,7 @@ def render_overview():
     if dca_enabled:
         fig.add_trace(go.Scatter(x=total_invested.index, y=total_invested, mode='lines', name='Capital Investi', line=dict(color='orange', width=1, dash='dot')))
     fig.update_layout(title=f"Évolution du capital ({selected_period})", xaxis_title="Date", yaxis_title="Valeur ($)", hovermode='x unified')
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Rendement Total", f"{p_simple:.2%}")
     col2.metric("Rendement Annualisé", f"{p_annual:.2%}")
@@ -522,10 +382,10 @@ def render_performance_risks():
     if 'analysis_type' not in st.session_state:
         st.session_state.analysis_type = 'drawdown'
     with colA:
-        if st.button("Évolution du Drawdown", type="primary" if st.session_state.analysis_type=='drawdown' else "secondary", use_container_width=True):
+        if st.button("Évolution du Drawdown", type="primary" if st.session_state.analysis_type=='drawdown' else "secondary", width='stretch'):
             st.session_state.analysis_type='drawdown'
     with colB:
-        if st.button("Horizon de Placement", type="primary" if st.session_state.analysis_type=='horizon' else "secondary", use_container_width=True):
+        if st.button("Horizon de Placement", type="primary" if st.session_state.analysis_type=='horizon' else "secondary", width='stretch'):
             st.session_state.analysis_type='horizon'
     if st.session_state.analysis_type=='drawdown':
         dd_port = portfolio_drawdown_series; dd_bench = benchmark_drawdown_series
@@ -544,7 +404,7 @@ def render_performance_risks():
                     recovery_days = (rec_dates.index[0]-max_dd_date).days
                     recovery_info = f" | Récupération: {recovery_days} j"
             st.info(f"Drawdown max {max_dd_val:.2%} le {max_dd_date.strftime('%d/%m/%Y')}{recovery_info}")
-            st.plotly_chart(fig_dd, use_container_width=True)
+            st.plotly_chart(fig_dd, width='stretch')
             c1,c2,c3,c4 = st.columns(4)
             avg_dd = dd_port[dd_port<0].mean() if (dd_port<0).any() else 0
             with c1: st.metric("DD Moyen", f"{avg_dd:.2%}")
@@ -582,7 +442,7 @@ def render_performance_risks():
             fig_h.add_hline(y=50,line_dash='dash',line_color='orange')
             fig_h.add_hline(y=80,line_dash='dot',line_color='blue')
             fig_h.update_layout(title="Probabilité de Gain vs Horizon", xaxis_title="Années", yaxis_title="Probabilité (%)", yaxis=dict(range=[0,105]))
-            st.plotly_chart(fig_h, use_container_width=True)
+            st.plotly_chart(fig_h, width='stretch')
         else:
             st.warning("Période insuffisante pour analyser l'horizon.")
     st.markdown("---")
@@ -605,74 +465,146 @@ def render_performance_risks():
                 line_x = np.array([x.min(), x.max()]); line_y = slope*line_x+intercept
                 fig_reg.add_trace(go.Scatter(x=line_x,y=line_y,mode='lines',name=f'Vertical (β={slope:.2f})',line=dict(color='red')))
             fig_reg.update_layout(title=f"Corrélation vs {benchmark}", xaxis_title=f"{benchmark} (%)", yaxis_title="Portefeuille (%)")
-            st.plotly_chart(fig_reg, use_container_width=True)
+            st.plotly_chart(fig_reg, width='stretch')
 
 
 def render_allocation_diversification():
     st.subheader("Allocation & Diversification")
     # Géographie
-    geo_data=[]
+    geo_data = []
     for t in valid_tickers:
         try:
-            info = yf.Ticker(t).info; country = info.get('country','Inconnu')
-            geo_data.append({'Ticker':t,'Country':country,'Weight':st.session_state.weights.get(t,0)})
-        except Exception: pass
+            info = yf.Ticker(t).info
+            country = info.get("country", "Inconnu")
+            geo_data.append({"Ticker": t, "Country": country, "Weight": st.session_state.weights.get(t, 0)})
+        except Exception:
+            pass
     geo_df = pd.DataFrame(geo_data)
     if not geo_df.empty:
-        geo_df = geo_df.groupby('Country').agg({'Weight':'sum'}).reset_index(); geo_df=geo_df[geo_df['Weight']>0]
+        geo_df = geo_df.groupby("Country").agg({"Weight": "sum"}).reset_index()
+        geo_df = geo_df[geo_df["Weight"] > 0]
     if not geo_df.empty:
-        gc1,gc2 = st.columns(2)
+        gc1, gc2 = st.columns(2)
         with gc1:
-            fig_geo = px.pie(geo_df, names='Country', values='Weight', title='Répartition par Pays')
-            fig_geo.update_traces(textposition='inside', textinfo='percent+label')
-            st.plotly_chart(fig_geo, use_container_width=True)
+            fig_geo = px.pie(geo_df, names="Country", values="Weight", title="Répartition par Pays")
+            fig_geo.update_traces(textposition="inside", textinfo="percent+label")
+            st.plotly_chart(fig_geo, width='stretch')
         with gc2:
-            conflict_countries = ['Ukraine','Russia','Afghanistan','Syria','Yemen','Myanmar','Ethiopia','Sudan','Gaza','Israel','Palestine']
-            fig_map = px.choropleth(geo_df, locations='Country', locationmode='country names', hover_name='Country', title='Exposition Géographique', color='Weight', color_continuous_scale=px.colors.sequential.Plasma)
-            fig_map.add_trace(go.Choropleth(locations=conflict_countries, locationmode='country names', z=[1]*len(conflict_countries), colorscale=[[0,'black'],[1,'black']], showscale=False, name='Zones de conflit'))
-            fig_map.update_geos(fitbounds="locations", visible=True)
-            st.plotly_chart(fig_map, use_container_width=True)
+            conflict_countries = [
+                "Ukraine",
+                "Russia",
+                "Afghanistan",
+                "Syria",
+                "Yemen",
+                "Myanmar",
+                "Ethiopia",
+                "Sudan",
+                "Gaza",
+                "Israel",
+                "Palestine",
+            ]
+            # Try to map country names to ISO-3 codes to avoid future locationmode issues.
+            geo_df_map = geo_df.copy()
+            # Import pycountry locally to avoid hard dependency at module import time
+            try:
+                import pycountry
+            except Exception:
+                pycountry = None
+
+            def to_iso3(name):
+                if not pycountry:
+                    return None
+                try:
+                    c = pycountry.countries.lookup(name)
+                    return c.alpha_3
+                except Exception:
+                    return None
+
+            geo_df_map['iso_alpha'] = geo_df_map['Country'].apply(to_iso3)
+            if geo_df_map['iso_alpha'].notna().all():
+                fig_map = px.choropleth(
+                    geo_df_map,
+                    locations='iso_alpha',
+                    locationmode='ISO-3',
+                    hover_name='Country',
+                    title='Exposition Géographique',
+                    color='Weight',
+                    color_continuous_scale=px.colors.sequential.Plasma,
+                )
+            else:
+                # Fallback to country names (will warn in future versions)
+                fig_map = px.choropleth(
+                    geo_df,
+                    locations='Country',
+                    locationmode='country names',
+                    hover_name='Country',
+                    title='Exposition Géographique',
+                    color='Weight',
+                    color_continuous_scale=px.colors.sequential.Plasma,
+                )
+            # Ajout visuel des zones de conflit (indicatif)
+            st.plotly_chart(fig_map, width='stretch')
     else:
         st.info("Pas de données géographiques disponibles.")
+
     st.markdown("---")
     # Secteurs & Industries
-    sector_data=[]; industry_data=[]
+    sector_data = []
+    industry_data = []
     for t in valid_tickers:
         try:
-            info=yf.Ticker(t).info
-            sector_data.append({'Ticker':t,'Sector':info.get('sectorKey','Inconnu'),'Weight':st.session_state.weights.get(t,0)})
-            industry_data.append({'Ticker':t,'Industry':info.get('industryKey','Inconnu'),'Weight':st.session_state.weights.get(t,0)})
+            info = yf.Ticker(t).info
+            sector_data.append({
+                "Ticker": t,
+                "Sector": info.get("sectorKey", "Inconnu"),
+                "Weight": st.session_state.weights.get(t, 0),
+            })
+            industry_data.append({
+                "Ticker": t,
+                "Industry": info.get("industryKey", "Inconnu"),
+                "Weight": st.session_state.weights.get(t, 0),
+            })
         except Exception:
-            sector_data.append({'Ticker':t,'Sector':'Inconnu','Weight':st.session_state.weights.get(t,0)})
-            industry_data.append({'Ticker':t,'Industry':'Inconnu','Weight':st.session_state.weights.get(t,0)})
+            sector_data.append({"Ticker": t, "Sector": "Inconnu", "Weight": st.session_state.weights.get(t, 0)})
+            industry_data.append({"Ticker": t, "Industry": "Inconnu", "Weight": st.session_state.weights.get(t, 0)})
+
     if sector_data:
-        sector_df=pd.DataFrame(sector_data)
-        sector_summary=sector_df.groupby('Sector').agg({'Weight':'sum','Ticker':lambda x:', '.join(x)}).reset_index(); sector_summary=sector_summary[sector_summary['Weight']>0]
+        sector_df = pd.DataFrame(sector_data)
+        sector_summary = (
+            sector_df.groupby("Sector").agg({"Weight": "sum", "Ticker": lambda x: ", ".join(x)}).reset_index()
+        )
+        sector_summary = sector_summary[sector_summary["Weight"] > 0]
     else:
-        sector_summary=pd.DataFrame()
+        sector_summary = pd.DataFrame()
+
     if industry_data:
-        industry_df=pd.DataFrame(industry_data)
-        industry_summary=industry_df.groupby('Industry').agg({'Weight':'sum','Ticker':lambda x:', '.join(x)}).reset_index(); industry_summary=industry_summary[industry_summary['Weight']>0]
+        industry_df = pd.DataFrame(industry_data)
+        industry_summary = (
+            industry_df.groupby("Industry").agg({"Weight": "sum", "Ticker": lambda x: ", ".join(x)}).reset_index()
+        )
+        industry_summary = industry_summary[industry_summary["Weight"] > 0]
     else:
-        industry_summary=pd.DataFrame()
+        industry_summary = pd.DataFrame()
     if not sector_summary.empty and not industry_summary.empty:
         sc1, sc2 = st.columns(2)
         with sc1:
             fig_sector = px.pie(sector_summary, names='Sector', values='Weight', title='Secteurs', hover_data=['Ticker'])
             fig_sector.update_traces(textposition='inside', textinfo='percent+label')
-            st.plotly_chart(fig_sector, use_container_width=True)
+            st.plotly_chart(fig_sector, width='stretch')
         with sc2:
             fig_industry = px.pie(industry_summary, names='Industry', values='Weight', title='Industries', hover_data=['Ticker'])
             fig_industry.update_traces(textposition='inside', textinfo='percent+label')
-            st.plotly_chart(fig_industry, use_container_width=True)
+            st.plotly_chart(fig_industry, width='stretch')
     if not sector_summary.empty:
         st.markdown("#### Détails Secteurs")
         display = sector_summary.rename(columns={'Sector':'Secteur','Weight':'Poids (%)','Ticker':'Tickers'}).copy()
         display['Poids (%)'] = display['Poids (%)'].apply(lambda x: f"{x:.1f}%")
-        st.dataframe(display, use_container_width=True, hide_index=True)
-        num_sectors=len(sector_summary); max_sector_weight=sector_summary['Weight'].max(); dominant_sector=sector_summary.loc[sector_summary['Weight'].idxmax(),'Sector']
-        hhi=sum((w/100)**2 for w in sector_summary['Weight'])
-        mc1,mc2,mc3,mc4=st.columns(4)
+        st.dataframe(display, width='stretch', hide_index=True)
+        num_sectors = len(sector_summary)
+        max_sector_weight = sector_summary['Weight'].max()
+        dominant_sector = sector_summary.loc[sector_summary['Weight'].idxmax(),'Sector']
+        hhi = sum((w/100)**2 for w in sector_summary['Weight'])
+        mc1,mc2,mc3,mc4 = st.columns(4)
         mc1.metric("Nb Secteurs", num_sectors)
         mc2.metric("Secteur Dominant", dominant_sector)
         mc3.metric("Poids Max", f"{max_sector_weight:.1f}%")
@@ -773,17 +705,29 @@ def render_monte_carlo():
         fig_mc.add_trace(go.Scatter(x=percentiles.index, y=percentiles['p50'], mode='lines', name='Médiane (50%)', line=dict(color='blue',width=3)))
         fig_mc.add_trace(go.Scatter(x=percentiles.index, y=percentiles['p95'], mode='lines', name='Optimiste (95%)', line=dict(color='green',width=2)))
         fig_mc.update_layout(title=f"Distribution des Valeurs Futures ({horizon_years} ans)", xaxis_title='Jours', yaxis_title='Valeur ($)', hovermode='x unified')
-        st.plotly_chart(fig_mc, use_container_width=True)
+        st.plotly_chart(fig_mc, width='stretch')
         final_values = simulations_df.iloc[-1]
-        p5_val = final_values.quantile(0.05); p50_val = final_values.quantile(0.50); p95_val = final_values.quantile(0.95); mean_val = final_values.mean()
-        cagr_median = (p50_val/start_value)**(1/horizon_years)-1; cagr_mean = (mean_val/start_value)**(1/horizon_years)-1
+        p5_val = final_values.quantile(0.05)
+        p50_val = final_values.quantile(0.50)
+        p95_val = final_values.quantile(0.95)
+        mean_val = final_values.mean()
+        cagr_median = (p50_val/start_value)**(1/horizon_years)-1
+        cagr_mean = (mean_val/start_value)**(1/horizon_years)-1
         m1,m2,m3,m4 = st.columns(4)
         m1.metric("Pessimiste (5%)", f"{p5_val:,.0f}$")
         m2.metric("Médiane", f"{p50_val:,.0f}$", f"CAGR {cagr_median:.2%}")
         m3.metric("Optimiste (95%)", f"{p95_val:,.0f}$")
         m4.metric("Moyenne", f"{mean_val:,.0f}$", f"CAGR {cagr_mean:.2%}")
         st.markdown("### Probabilité d'Atteindre un Objectif")
-        target_value = st.number_input("Objectif ($)", min_value=0, value=int(start_value*2), step=1000)
+        # Valeur par défaut plus flexible : 50% au-dessus de la valeur actuelle ou valeur personnalisée
+        default_target = int(start_value * 1.5) if start_value > 0 else 100000
+        target_value = st.number_input(
+            "Objectif ($)", 
+            min_value=0, 
+            value=default_target, 
+            step=5000,
+            help="Saisissez votre objectif financier à atteindre"
+        )
         if target_value>0:
             prob_target = (final_values>=target_value).mean()
             st.info(f"Probabilité d'atteindre {target_value:,.0f}$ : **{prob_target:.1%}**")
@@ -792,16 +736,29 @@ def render_monte_carlo():
             hist_fig.add_vline(x=mean_val, line_dash='dash', line_color='blue')
             hist_fig.add_vline(x=p50_val, line_dash='dot', line_color='black')
             hist_fig.add_vrect(x0=p5_val, x1=p95_val, fillcolor='green', opacity=0.08, line_width=0)
-            st.plotly_chart(hist_fig, use_container_width=True)
+            st.plotly_chart(hist_fig, width='stretch')
         with st.expander("Méthodologie & Interprétation"):
             st.markdown("""Simulation Monte-Carlo via GBM (rendements log-normaux, volatilité constante). Limites: pas de régimes de marché, pas de queues grasses, volatilité non conditionnelle.""")
 
 # --- IA ---
 
-def generate_portfolio_analysis(portfolio_data, benchmark_data, metrics, advanced_metrics, period, tickers_list, weights, additional_context=None):
+def generate_portfolio_analysis(portfolio_data: pd.DataFrame, benchmark_data: pd.DataFrame, metrics: dict[str, Any], advanced_metrics: dict[str, Any], period: str, tickers_list: list[str], weights: dict[str, float], additional_context: dict[str, Any] | None = None):
     try:
         from openai import OpenAI
-        client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+        # Prefer st.secrets (local Streamlit secrets) but fall back to environment variable for Docker
+        api_key = None
+        try:
+            api_key = st.secrets.get("OPENAI_API_KEY") if hasattr(st, 'secrets') else None
+        except Exception:
+            api_key = None
+        if not api_key:
+            api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            return (
+                "Erreur IA: clé OpenAI non trouvée. Définissez OPENAI_API_KEY dans .streamlit/secrets.toml "
+                "ou passez-la en variable d'environnement au conteneur Docker (ex: `-e OPENAI_API_KEY=...`)."
+            )
+        client = OpenAI(api_key=api_key)
         assets_details={}; total_market_cap=0
         for ticker in tickers_list:
             try:
@@ -809,7 +766,7 @@ def generate_portfolio_analysis(portfolio_data, benchmark_data, metrics, advance
                 assets_details[ticker]={"poids":float(weights.get(ticker,0)),"secteur":str(info.get('sectorKey','Inconnu')),"industrie":str(info.get('industryKey','Inconnu')),"pays":str(info.get('country','Inconnu')),"capitalisation":int(mc) if mc else 0}
             except:
                 assets_details[ticker]={"poids":float(weights.get(ticker,0)),"secteur":"Inconnu","industrie":"Inconnu","pays":"Inconnu","capitalisation":0}
-        secteurs={}; pays={}
+        secteurs: dict[str, float] = {}; pays: dict[str, float] = {}
         for t,d in assets_details.items():
             secteurs[d['secteur']]=secteurs.get(d['secteur'],0)+d['poids']
             pays[d['pays']]=pays.get(d['pays'],0)+d['poids']
@@ -830,7 +787,7 @@ def render_ai_analysis():
     if st.button("Générer l'analyse IA", type="primary"):
         with st.spinner("Analyse en cours..."):
             metrics_for_ai={ 'portfolio_simple':p_simple,'portfolio_annual':p_annual,'portfolio_vol':p_vol,'portfolio_sharpe':p_sharpe,'portfolio_drawdown':p_drawdown,'benchmark_total':b_total,'benchmark_annual':b_annual,'benchmark_vol':b_vol,'benchmark_sharpe':b_sharpe,'benchmark_drawdown':b_drawdown }
-            ai_report=generate_portfolio_analysis(portfolio_value, benchmark_value, metrics_for_ai, advanced_metrics, selected_period, st.session_state.tickers_list, st.session_state.weights, additional_context={"risk_free_rate":risk_free_rate})
+            ai_report=generate_ai_analysis(portfolio_value, benchmark_value, metrics_for_ai, advanced_metrics, selected_period, st.session_state.tickers_list, st.session_state.weights, additional_context={"risk_free_rate":risk_free_rate})
         st.markdown(ai_report)
         st.download_button("Télécharger", ai_report, file_name=f"analyse_portefeuille_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
     with st.expander("À propos"):
