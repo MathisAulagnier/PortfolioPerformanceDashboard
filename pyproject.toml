@@ -32,5 +32,9 @@ no_implicit_optional = true
 check_untyped_defs = true
 pretty = true
 
+[[tool.mypy.overrides]]
+module = "dateutil.relativedelta"
+ignore_missing_imports = true
+
 [tool.ruff.lint.isort]
 known-first-party = ["src"]

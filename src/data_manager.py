@@ -1,5 +1,5 @@
-import streamlit as st
 import pandas as pd
+import streamlit as st
 import yfinance as yf
 
 
@@ -11,7 +11,9 @@ def get_data(tickers: list[str], start, end) -> pd.DataFrame:
     """
     try:
         # Pass explicit auto_adjust to avoid FutureWarning when the default changes
-        data = yf.download(tickers, start=start, end=end, progress=False, auto_adjust=False)["Close"]
+        data = yf.download(tickers, start=start, end=end, progress=False, auto_adjust=False)[
+            "Close"
+        ]
         if isinstance(data, pd.Series):
             data = data.to_frame(name=tickers[0])
         return data.dropna(how="all")

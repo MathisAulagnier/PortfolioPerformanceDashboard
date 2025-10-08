@@ -50,14 +50,16 @@ def calculate_dca_portfolio(
             available_dates = portfolio_returns.index[portfolio_returns.index >= current_date]
             if len(available_dates) > 0:
                 dca_dates.add(available_dates[0])
-            current_date += relativedelta(months=1) if dca_frequency == "Mensuelle" else relativedelta(years=1)
+            current_date += (
+                relativedelta(months=1) if dca_frequency == "Mensuelle" else relativedelta(years=1)
+            )
 
     for i in range(1, len(portfolio_returns)):
         date = portfolio_returns.index[i]
         if dca_enabled and date in dca_dates:
             current_value += float(dca_amount)
             cumulative_invested += float(dca_amount)
-        current_value *= (1 + float(portfolio_returns.iloc[i]))
+        current_value *= 1 + float(portfolio_returns.iloc[i])
         portfolio_value.iloc[i] = current_value
         total_invested.iloc[i] = cumulative_invested
 
@@ -81,7 +83,13 @@ def calculate_metrics_with_dca(
     annualized_return = ((1 + twr) ** (252 / num_days)) - 1
     volatility = portfolio_returns.std() * np.sqrt(252)
     sharpe_ratio = (annualized_return - risk_free_rate) / (volatility + 1e-10)
-    return float(simple_return), float(annualized_return), float(volatility), float(sharpe_ratio), float(twr)
+    return (
+        float(simple_return),
+        float(annualized_return),
+        float(volatility),
+        float(sharpe_ratio),
+        float(twr),
+    )
 
 
 def calculate_advanced_metrics(
@@ -128,7 +136,9 @@ def calculate_max_drawdown(portfolio_value: pd.Series) -> float:
     return float(calculate_drawdown_series(portfolio_value).min())
 
 
-def calculate_holding_period_analysis(portfolio_returns: pd.Series, max_horizon_years: int = 20) -> dict:
+def calculate_holding_period_analysis(
+    portfolio_returns: pd.Series, max_horizon_years: int = 20
+) -> dict:
     if portfolio_returns.empty or len(portfolio_returns) < 252:
         return {}
     results: dict = {}
@@ -163,6 +173,8 @@ def calculate_holding_period_analysis(portfolio_returns: pd.Series, max_horizon_
             "percentile_10": float(np.percentile(arr, 10)),
             "percentile_90": float(np.percentile(arr, 90)),
             "num_periods": int(len(arr)),
-            "annualized_avg_return": ((1 + float(np.mean(arr))) ** (1 / horizon_years)) - 1 if horizon_years > 0 else float(np.mean(arr)),
+            "annualized_avg_return": ((1 + float(np.mean(arr))) ** (1 / horizon_years)) - 1
+            if horizon_years > 0
+            else float(np.mean(arr)),
         }
     return results
