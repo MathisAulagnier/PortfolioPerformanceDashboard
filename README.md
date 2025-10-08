@@ -73,8 +73,8 @@ Suivez ces étapes pour lancer le projet sur votre machine locale.
 
 1.  **Clonez le dépôt**
     ```sh
-    git clone [https://github.com/votre-nom-utilisateur/votre-repo.git](https://github.com/votre-nom-utilisateur/votre-repo.git)
-    cd votre-repo
+    git clone https://github.com/MathisAulagnier/PortfolioPerformanceDashboard.git
+    cd PortfolioPerformanceDashboard
     ```
 
 2.  **Créez un environnement virtuel** (recommandé)
@@ -102,10 +102,22 @@ Suivez ces étapes pour lancer le projet sur votre machine locale.
     OPENAI_API_KEY = "votre_cle_api_ici"
     ```
 
-5.  **Lancez l'application**
+5.  **Installez les dépendances et lancez l'application**
     ```sh
-    streamlit run app.py
+    pip install -r requirements.txt
+    streamlit run src/b.py
     ```
+
+### Option: Docker
+
+Vous pouvez lancer l'application dans un conteneur:
+
+```sh
+docker build -t portfolio-dashboard .
+docker run --rm -p 8501:8501 -e APP_PATH=src/b.py portfolio-dashboard
+```
+
+Ouvrez http://localhost:8501
 
 ---
 
@@ -117,6 +129,11 @@ Une fois l'application lancée, utilisez la barre latérale pour :
 3.  Choisir la période de backtest, le capital initial et l'indice de référence.
 4.  Configurer les paramètres de DCA si vous le souhaitez.
 5.  Explorer les différents onglets pour analyser les résultats.
+
+### Sécurité des secrets
+
+- Le fichier `.streamlit/secrets.toml` est ignoré par Git. Renseignez-y vos clés API uniquement en local.
+- Ne commitez jamais de secrets. Si un secret a été exposé, révoquez-le immédiatement et remplacez-le par un nouveau.
 
 ---
 

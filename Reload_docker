@@ -1,0 +1,14 @@
+# 1. Arrêter le conteneur existant (si nécessaire)
+docker stop portfolio-app
+
+# 2. Supprimer le conteneur existant
+docker rm portfolio-app
+
+# 3. Reconstruire l'image avec les modifications
+docker build -t portfolio-dashboard .
+
+# 4. Lancer le nouveau conteneur
+docker run -d -p 8501:8501 --name portfolio-app portfolio-dashboard
+
+# 5. Vérifier que tout fonctionne
+docker logs portfolio-app

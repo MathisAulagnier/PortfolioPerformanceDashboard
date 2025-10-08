@@ -1,0 +1,28 @@
+# Docker Compose configuration pour PortfolioPerformanceDashboard
+# Monte le dossier local .streamlit (contenant secrets.toml) dans /app/src/.streamlit du conteneur
+# Utilisez `docker compose up --build -d` pour lancer
+
+version: '3.8'
+services:
+  portfolio-app:
+    build: .
+    image: portfolio-dashboard
+    container_name: portfolio-app
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./src:/app/src
+      - ./Portfolios:/app/Portfolios:ro
+      - ./images:/app/images:ro
+      - ./.streamlit:/app/src/.streamlit:ro
+    restart: unless-stopped
+    environment:
+      # Si vous préférez passer la clé via variable d'environnement au lieu de monter secrets.toml,
+      # décommentez la ligne suivante et/ou ajoutez OPENAI_API_KEY dans un fichier .env
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PYTHONUNBUFFERED=1
+
+# Notes:
+# - Le montage ././.streamlit:/app/src/.streamlit permet à streamlit (st.secrets) de lire votre secrets.toml
+# - Le service utilise l'image construite depuis le Dockerfile (contexte = racine)
+# - N'ajoutez jamais vos vraies clés dans le repo. Le fichier .streamlit/secrets.toml doit rester dans .gitignore
