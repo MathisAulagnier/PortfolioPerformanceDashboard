@@ -29,76 +29,8 @@ st.set_page_config(layout="wide", page_title="Dashboard de Backtesting")
 
 # --- Fonctions externalisées (voir modules importés ci-dessus) ---
 
-# --- NOUVEAU : Gestion du thème ---
-ms = st.session_state
-if "themes" not in ms:
-    ms.themes = {
-        "current_theme": "light",
-        "refreshed": True,
-        "light": {
-            "theme.base": "dark",
-            "theme.backgroundColor": "black",
-            "theme.primaryColor": "#c98bdb",
-            "theme.secondaryBackgroundColor": "#5591f5",
-            "theme.textColor": "white",
-            "button_face": "🌜",
-        },
-        "dark": {
-            "theme.base": "light",
-            "theme.backgroundColor": "white",
-            "theme.primaryColor": "#5591f5",
-            "theme.secondaryBackgroundColor": "#82E1D7",
-            "theme.textColor": "#0a1464",
-            "button_face": "🌞",
-        },
-    }
-
-# Appliquer le thème initial une seule fois au démarrage (force sombre si configuré)
-if "theme_applied" not in ms:
-    ms.theme_applied = True
-    # Déterminer quel dictionnaire utiliser (la clé 'current_theme' est contrôlée par l'app)
-    chosen = ms.themes.get("current_theme", "light")
-    tdict = ms.themes.get(chosen, {})
-    for vkey, vval in tdict.items():
-        if vkey.startswith("theme"):
-            try:
-                st._config.set_option(vkey, vval)
-            except Exception:
-                # Ne pas planter l'app si une option n'est pas disponible
-                pass
-
-
-def ChangeTheme():
-    previous_theme = ms.themes["current_theme"]
-    tdict = ms.themes["light"] if ms.themes["current_theme"] == "light" else ms.themes["dark"]
-    for vkey, vval in tdict.items():
-        if vkey.startswith("theme"):
-            st._config.set_option(vkey, vval)
-
-    ms.themes["refreshed"] = False
-    if previous_theme == "dark":
-        ms.themes["current_theme"] = "light"
-    elif previous_theme == "light":
-        ms.themes["current_theme"] = "dark"
-
-
 # --- Barre Latérale (Sidebar) pour tous les contrôles ---
-
-# Colonnes pour le titre et le bouton de thème
-col1, col2 = st.sidebar.columns([0.8, 0.2])
-with col1:
-    st.title("Paramètres")
-with col2:
-    btn_face = (
-        ms.themes["light"]["button_face"]
-        if ms.themes["current_theme"] == "light"
-        else ms.themes["dark"]["button_face"]
-    )
-    st.button(btn_face, on_click=ChangeTheme, help="Changer de thème")
-
-if ms.themes["refreshed"] is False:
-    ms.themes["refreshed"] = True
-    st.rerun()
+st.sidebar.title("Paramètres")
 
 st.sidebar.markdown("Commencez par ajouter des actions à votre portefeuille.")
 
@@ -512,21 +444,32 @@ def render_performance_risks():
             st.rerun()
     # Toggle Drawdown / Horizon
     st.markdown("### Analyse des Risques et Horizon")
-    colA, colB = st.columns(2)
+
+    # Initialisation de l'état
     if "analysis_type" not in st.session_state:
         st.session_state.analysis_type = "drawdown"
+
+    # Utiliser des colonnes pour les boutons radio stylisés
+    colA, colB = st.columns(2)
     with colA:
         if st.button(
             "Évolution du Drawdown",
             type="primary" if st.session_state.analysis_type == "drawdown" else "secondary",
+            use_container_width=True,
+            key="btn_drawdown",
         ):
             st.session_state.analysis_type = "drawdown"
+            st.rerun()
     with colB:
         if st.button(
             "Horizon de Placement",
             type="primary" if st.session_state.analysis_type == "horizon" else "secondary",
+            use_container_width=True,
+            key="btn_horizon",
         ):
             st.session_state.analysis_type = "horizon"
+            st.rerun()
+
     if st.session_state.analysis_type == "drawdown":
         dd_port = portfolio_drawdown_series
         dd_bench = benchmark_drawdown_series
@@ -1030,15 +973,6 @@ def render_monte_carlo():
         m3.metric("Optimiste (95%)", f"{p95_val:,.0f}$")
         m4.metric("Moyenne", f"{mean_val:,.0f}$", f"CAGR {cagr_mean:.2%}")
         st.markdown("### Probabilité d'Atteindre un Objectif")
-        # Valeur par défaut plus flexible : 50% au-dessus de la valeur actuelle ou valeur personnalisée
-        default_target = int(start_value * 1.5) if start_value > 0 else 100000
-        target_value = st.number_input(
-            "Objectif ($)",
-            min_value=0,
-            value=default_target,
-            step=5000,
-            help="Saisissez votre objectif financier à atteindre",
-        )
         if target_value > 0:
             prob_target = float((final_values >= target_value).mean())
             st.info(f"Probabilité d'atteindre {target_value:,.0f}$ : **{prob_target:.1%}**")

@@ -32,3 +32,6 @@ __pycache__/
 # Fichiers de sauvegarde
 *.bak
 *.backup
+
+# --- IGNORE AGENT ---
+Agent_log/
