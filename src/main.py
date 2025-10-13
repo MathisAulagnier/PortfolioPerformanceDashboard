@@ -908,6 +908,11 @@ def render_monte_carlo():
         )
     with col_cfg3:
         st.metric("Valeur de départ utilisée", f"{start_value:,.0f}$")
+    # Input cible pour la simulation (permet de définir le prix objectif avant d'exécuter)
+    target_default = int(start_value * 1.5) if start_value > 0 else 100000
+    target_value = st.number_input(
+        "Objectif à atteindre ($)", min_value=0, value=target_default, step=1000, key="mc_target"
+    )
     assumption_mode = st.radio(
         "Hypothèses", ["Basées sur l'historique", "Manuelles"], horizontal=True
     )
@@ -995,12 +1000,22 @@ def render_monte_carlo():
                 line=dict(color="green", width=2),
             )
         )
+        # If a target_value is provided, add horizontal line at target and vertical where median crosses
         fig_mc.update_layout(
             title=f"Distribution des Valeurs Futures ({horizon_years} ans)",
             xaxis_title="Jours",
             yaxis_title="Valeur ($)",
             hovermode="x unified",
         )
+        # Overlay target line if specified
+        if target_value and target_value > 0:
+            fig_mc.add_hline(
+                y=target_value,
+                line_dash="dash",
+                line_color="black",
+                annotation_text=f"Objectif: {target_value:,.0f}$",
+                annotation_position="top left",
+            )
         st.plotly_chart(fig_mc, use_container_width=True)
         final_values = simulations_df.iloc[-1]
         p5_val = final_values.quantile(0.05)
@@ -1025,7 +1040,7 @@ def render_monte_carlo():
             help="Saisissez votre objectif financier à atteindre",
         )
         if target_value > 0:
-            prob_target = (final_values >= target_value).mean()
+            prob_target = float((final_values >= target_value).mean())
             st.info(f"Probabilité d'atteindre {target_value:,.0f}$ : **{prob_target:.1%}**")
         with st.expander("Histogramme des valeurs finales"):
             hist_fig = px.histogram(
@@ -1037,6 +1052,14 @@ def render_monte_carlo():
             hist_fig.add_vline(x=mean_val, line_dash="dash", line_color="blue")
             hist_fig.add_vline(x=p50_val, line_dash="dot", line_color="black")
             hist_fig.add_vrect(x0=p5_val, x1=p95_val, fillcolor="green", opacity=0.08, line_width=0)
+            if target_value and target_value > 0:
+                hist_fig.add_vline(
+                    x=target_value,
+                    line_dash="dash",
+                    line_color="black",
+                    annotation_text=f"Objectif: {target_value:,.0f}$",
+                    annotation_position="top right",
+                )
             st.plotly_chart(hist_fig, use_container_width=True)
         with st.expander("Méthodologie & Interprétation"):
             st.markdown(

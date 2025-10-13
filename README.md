@@ -105,7 +105,7 @@ Suivez ces étapes pour lancer le projet sur votre machine locale.
 5.  **Installez les dépendances et lancez l'application**
     ```sh
     pip install -r requirements.txt
-    streamlit run src/b.py
+    streamlit run src/main.py
     ```
 
 ### Option: Docker
