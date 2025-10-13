@@ -140,3 +140,27 @@ Une fois l'application lancée, utilisez la barre latérale pour :
 ## Licence
 
 Distribué sous la licence MIT. Voir le fichier `LICENSE` pour plus d'informations.
+
+---
+
+## Changements récents
+
+Ce projet a récemment reçu plusieurs corrections et optimisations visant à améliorer la compatibilité avec les versions récentes de Streamlit/Plotly et à réduire les appels réseau et le temps de calcul lors de l'utilisation interactive.
+
+Principales modifications (résumé en français) :
+
+- Remplacement des arguments dépréciés de Streamlit/Plotly : `width="stretch"` a été supprimé et les appels utilisent désormais `use_container_width=True` pour les graphiques et les tableaux.
+- Réduction des appels réseau à yfinance : ajout d'une fonction mise en cache `get_ticker_info` (dans `src/data_manager.py`) pour éviter d'appeler `yf.Ticker(...).info` à répétition.
+- Caching des calculs lourds : plusieurs fonctions de `src/calculations.py` sont désormais décorées avec `@st.cache_data` afin de diminuer les recomputations sur les reruns interactifs.
+- Validation des tickers optimisée : les tests de disponibilité des tickers utilisent désormais `get_data(...)` (caché) au lieu d'appels directs non-cachés à `yf.Ticker().history`.
+- Gestion du thème : l'application applique le thème stocké en session au démarrage de façon sûre (sans forcer systématiquement le mode sombre), et le bouton de changement de thème met à jour la session.
+- OpenAI : création d'un helper OpenAI mis en cache et récupération plus robuste de la clé API (secrets ou variable d'environnement).
+- Dépendance optionnelle `pycountry` : ajoutée aux dépendances pour permettre la cartographie ISO (utilisation optionnelle, protégée en cas d'absence).
+
+Pourquoi ces changements ?
+
+- Eviter les warnings et futures erreurs liés à des arguments dépréciés.
+- Améliorer la réactivité de l'interface Streamlit en réduisant les allers-retours réseau et en mémorisant les résultats coûteux.
+- Rendre le code plus robuste en cas d'erreurs réseau et fournir une meilleure expérience utilisateur (moins de latence lors d'explorations interactives).
+
+Si vous souhaitez que j'ajoute `pycountry` au fichier `requirements.txt` ou que je crée une petite note de mise à jour plus formelle (CHANGELOG.md), je peux le faire sur demande.
