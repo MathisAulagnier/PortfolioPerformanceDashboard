@@ -459,7 +459,7 @@ def render_performance_risks():
             key="btn_drawdown",
         ):
             st.session_state.analysis_type = "drawdown"
-            st.rerun()
+            # Pas de st.rerun() pour éviter de retourner à la page d'accueil
     with colB:
         if st.button(
             "Horizon de Placement",
@@ -468,7 +468,7 @@ def render_performance_risks():
             key="btn_horizon",
         ):
             st.session_state.analysis_type = "horizon"
-            st.rerun()
+            # Pas de st.rerun() pour éviter de retourner à la page d'accueil
 
     if st.session_state.analysis_type == "drawdown":
         dd_port = portfolio_drawdown_series
@@ -1097,21 +1097,65 @@ def generate_portfolio_analysis(
 
 def render_ai_analysis():
     st.subheader("Analyse IA")
+
+    # Préparer les données du prompt pour affichage AVANT génération
+    metrics_for_ai = {
+        "portfolio_simple": p_simple,
+        "portfolio_annual": p_annual,
+        "portfolio_vol": p_vol,
+        "portfolio_sharpe": p_sharpe,
+        "portfolio_drawdown": p_drawdown,
+        "portfolio_max_dd": p_drawdown,
+        "benchmark_total": b_total,
+        "benchmark_annual": b_annual,
+        "benchmark_vol": b_vol,
+        "benchmark_sharpe": b_sharpe,
+        "benchmark_drawdown": b_drawdown,
+    }
+
+    # Afficher un aperçu du prompt qui SERA envoyé
+    with st.expander("🔍 Aperçu du prompt qui sera envoyé à l'IA"):
+        st.info(
+            "Cliquez sur 'Générer l'analyse IA' pour voir le prompt complet et les données exactes envoyées."
+        )
+
+        st.markdown("**Métriques qui seront analysées:**")
+        st.json(
+            {
+                "performance": {
+                    "rendement_annualisé": f"{metrics_for_ai['portfolio_annual']:.2%}",
+                    "volatilité": f"{metrics_for_ai['portfolio_vol']:.2%}",
+                    "sharpe": f"{metrics_for_ai['portfolio_sharpe']:.2f}",
+                },
+                "risque_avancé": {
+                    "VaR_95": "Sera calculé",
+                    "CVaR_95": "Sera calculé",
+                    "contribution_risque": "Top 5 actifs",
+                    "durées_drawdown": "Max, moyenne, actuelle",
+                },
+                "portefeuille": {
+                    "actifs": st.session_state.tickers_list,
+                    "poids": st.session_state.weights,
+                    "période": selected_period,
+                },
+            }
+        )
+
+        st.markdown("**Type d'analyse demandée:**")
+        st.code(
+            """
+Structure de l'analyse IA:
+1. SYNTHÈSE (vue d'ensemble performance/risque)
+2. POINTS CLÉS (performance, risque, diversification)  
+3. RECOMMANDATIONS (3 actions concrètes chiffrées)
+4. VIGILANCE (points de surveillance court terme)
+        """,
+            language="text",
+        )
+
     if st.button("Générer l'analyse IA", type="primary"):
         with st.spinner("Analyse en cours..."):
-            metrics_for_ai = {
-                "portfolio_simple": p_simple,
-                "portfolio_annual": p_annual,
-                "portfolio_vol": p_vol,
-                "portfolio_sharpe": p_sharpe,
-                "portfolio_drawdown": p_drawdown,
-                "benchmark_total": b_total,
-                "benchmark_annual": b_annual,
-                "benchmark_vol": b_vol,
-                "benchmark_sharpe": b_sharpe,
-                "benchmark_drawdown": b_drawdown,
-            }
-            ai_report = generate_ai_analysis(
+            ai_result = generate_ai_analysis(
                 portfolio_value,
                 benchmark_value,
                 metrics_for_ai,
@@ -1120,15 +1164,50 @@ def render_ai_analysis():
                 st.session_state.tickers_list,
                 st.session_state.weights,
                 additional_context={"risk_free_rate": risk_free_rate},
+                portfolio_returns=portfolio_returns,
+                returns_by_asset=returns,
             )
+
+        # Gestion du nouveau format de retour (dict ou string pour rétrocompatibilité)
+        if isinstance(ai_result, dict):
+            ai_report = ai_result.get("analysis", "Aucune analyse disponible")
+            prompt_data = ai_result.get("prompt_data")
+        else:
+            ai_report = ai_result
+            prompt_data = None
+
         st.markdown(ai_report)
+
+        # Afficher le prompt RÉELLEMENT envoyé (après génération)
+        if prompt_data:
+            with st.expander("� Prompt et données RÉELLEMENT envoyés à l'IA", expanded=False):
+                st.markdown("**System Prompt:**")
+                st.code(prompt_data.get("system_prompt", ""), language="text")
+
+                st.markdown("**User Prompt:**")
+                st.code(prompt_data.get("user_prompt", ""), language="text")
+
+                st.markdown("**Données JSON complètes:**")
+                st.json(prompt_data.get("analysis_data", {}))
+
         st.download_button(
-            "Télécharger",
+            "Télécharger l'analyse",
             ai_report,
             file_name=f"analyse_portefeuille_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
         )
-    with st.expander("À propos"):
-        st.write("Analyse générée via modèle OpenAI. Coût variable selon longueur du prompt.")
+
+    with st.expander("ℹ️ À propos de l'analyse IA"):
+        st.write("""
+        **Fonctionnement:**
+        - L'analyse utilise GPT-3.5-turbo d'OpenAI
+        - Les métriques avancées (VaR, CVaR, contribution au risque) sont calculées en temps réel
+        - Le coût varie selon la longueur du prompt (~0.001-0.003$ par analyse)
+        
+        **Nouvelles métriques professionnelles incluses:**
+        - VaR/CVaR : Risque de queue à 95% de confiance
+        - Durées de drawdown : Résilience du portefeuille
+        - Contribution au risque : Identification des concentrations
+        """)
 
 
 # ===================== STRUCTURE DES ONGLETES PRINCIPAUX =====================

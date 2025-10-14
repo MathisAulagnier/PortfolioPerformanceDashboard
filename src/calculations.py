@@ -141,6 +141,137 @@ def calculate_max_drawdown(portfolio_value: pd.Series) -> float:
 
 
 @st.cache_data
+def calculate_var_cvar(
+    returns: pd.Series, confidence_level: float = 0.95, method: str = "historical"
+) -> dict[str, float]:
+    """Calcule Value at Risk (VaR) et Conditional VaR (CVaR/Expected Shortfall).
+
+    Args:
+        returns: Série des rendements (quotidiens ou périodiques)
+        confidence_level: Niveau de confiance (ex: 0.95 pour 95%)
+        method: 'historical' (recommandé) ou 'parametric'
+
+    Returns:
+        Dict avec 'VaR' et 'CVaR' (valeurs négatives = pertes)
+    """
+    if returns.empty or returns.isnull().all():
+        return {"VaR": 0.0, "CVaR": 0.0}
+
+    clean_returns = returns.dropna()
+    if len(clean_returns) == 0:
+        return {"VaR": 0.0, "CVaR": 0.0}
+
+    if method == "historical":
+        # VaR historique : percentile
+        var = float(np.percentile(clean_returns, (1 - confidence_level) * 100))
+        # CVaR : moyenne des rendements <= VaR
+        tail_returns = clean_returns[clean_returns <= var]
+        cvar = float(tail_returns.mean()) if len(tail_returns) > 0 else var
+    else:
+        # VaR paramétrique (gaussien)
+        mean = float(clean_returns.mean())
+        std = float(clean_returns.std())
+        from scipy.stats import norm
+
+        var = float(norm.ppf(1 - confidence_level, mean, std))
+        # CVaR paramétrique
+        cvar = mean - std * norm.pdf(norm.ppf(1 - confidence_level)) / (1 - confidence_level)
+
+    return {"VaR": var, "CVaR": float(cvar)}
+
+
+def calculate_drawdown_durations(portfolio_value: pd.Series) -> dict[str, float]:
+    """Calcule les statistiques de durée des drawdowns.
+
+    Returns:
+        Dict avec 'max_duration_days', 'avg_duration_days', 'current_duration_days'
+    """
+    if portfolio_value.empty or portfolio_value.isnull().all():
+        return {"max_duration_days": 0.0, "avg_duration_days": 0.0, "current_duration_days": 0.0}
+
+    drawdown_series = calculate_drawdown_series(portfolio_value)
+    if drawdown_series.empty:
+        return {"max_duration_days": 0.0, "avg_duration_days": 0.0, "current_duration_days": 0.0}
+
+    # Identifier les périodes de drawdown (valeur < 0)
+    in_drawdown = drawdown_series < 0
+
+    # Trouver les runs (séquences continues)
+    durations = []
+    current_duration = 0
+
+    for is_dd in in_drawdown:
+        if is_dd:
+            current_duration += 1
+        else:
+            if current_duration > 0:
+                durations.append(current_duration)
+                current_duration = 0
+
+    # Si on termine en drawdown
+    current_dd_duration = current_duration if current_duration > 0 else 0
+
+    max_duration = float(max(durations)) if durations else 0.0
+    avg_duration = float(np.mean(durations)) if durations else 0.0
+
+    return {
+        "max_duration_days": max_duration,
+        "avg_duration_days": avg_duration,
+        "current_duration_days": float(current_dd_duration),
+    }
+
+
+def calculate_risk_contribution(
+    returns: pd.DataFrame, weights: list[float] | np.ndarray
+) -> dict[str, float]:
+    """Calcule la contribution de chaque actif au risque total du portefeuille.
+
+    Args:
+        returns: DataFrame des rendements (colonnes = actifs)
+        weights: Liste/array des poids (doit sommer à 1)
+
+    Returns:
+        Dict {ticker: contribution_percentage} où la somme = 100%
+    """
+    if returns.empty or len(returns.columns) == 0:
+        return {}
+
+    clean_returns = returns.dropna()
+    if clean_returns.empty:
+        return {col: 0.0 for col in returns.columns}
+
+    w = np.array(weights, dtype=float)
+    if w.sum() == 0:
+        w = np.ones(len(w)) / len(w)
+    else:
+        w = w / w.sum()
+
+    # Matrice de covariance
+    cov_matrix = clean_returns.cov().values
+
+    # Volatilité du portefeuille
+    portfolio_variance = w @ cov_matrix @ w.T
+    portfolio_vol = np.sqrt(portfolio_variance) if portfolio_variance > 0 else 1e-10
+
+    # Contribution marginale au risque (MCR) = (cov_matrix @ w) / portfolio_vol
+    mcr = (cov_matrix @ w) / portfolio_vol
+
+    # Contribution au risque = weight * MCR
+    risk_contrib = w * mcr
+
+    # Normaliser en pourcentage
+    total_risk = risk_contrib.sum()
+    if total_risk > 0:
+        risk_contrib_pct = (risk_contrib / total_risk) * 100
+    else:
+        risk_contrib_pct = np.zeros(len(w))
+
+    return {
+        str(returns.columns[i]): float(risk_contrib_pct[i]) for i in range(len(returns.columns))
+    }
+
+
+@st.cache_data
 def calculate_holding_period_analysis(
     portfolio_returns: pd.Series, max_horizon_years: int = 20
 ) -> dict:

@@ -13,6 +13,8 @@ L'objectif était de créer une application capable de simuler des stratégies d
 * **Simulation de l'Investissement Programmé (DCA)** : Activez le DCA pour simuler des apports périodiques et observez leur impact sur la performance.
 * **Métriques de Performance Détaillées** : Accédez à des indicateurs clés comme le Rendement Annualisé, la Volatilité, le Ratio de Sharpe et le Time-Weighted Return (TWR) pour une analyse juste de la performance.
 * **Analyse de Risque Avancée** : Évaluez le comportement de votre portefeuille avec des métriques comme l'Alpha, le Bêta, le Ratio de Sortino et une visualisation détaillée des Drawdowns.
+* **🆕 Métriques de Risque Professionnelles** : VaR/CVaR pour quantifier le risque de queue, durées de drawdown, et contribution au risque par actif.
+* **🆕 Analyse IA Enrichie** : Recommandations chiffrées et actionnables basées sur des métriques quantitatives avancées (powered by OpenAI).
 * **Horizon de Placement** : Analysez la probabilité de gain de votre stratégie en fonction de la durée de détention.
 * **Analyse de la Composition** : Visualisez la répartition géographique, sectorielle et industrielle de votre portefeuille.
 
@@ -57,6 +59,42 @@ Comprenez la diversification de vos actifs grâce à une analyse visuelle de la 
 * **yfinance** : Pour la récupération des données de marché historiques.
 * **Plotly** : Pour la génération des graphiques interactifs.
 * **OpenAI API** : Pour la fonctionnalité optionnelle d'analyse par IA.
+* **🆕 SciPy** : Pour les calculs statistiques avancés (VaR/CVaR).
+
+---
+
+## 🆕 Nouveautés - Analyse IA Professionnelle
+
+### Métriques de Risque Avancées
+
+L'application intègre désormais des métriques institutionnelles pour une analyse de niveau professionnel :
+
+* **Value at Risk (VaR)** : Quantifie la perte maximale probable à 95% de confiance
+* **Conditional VaR (CVaR)** : Mesure la moyenne des pertes au-delà du VaR (risque de queue)
+* **Durées de Drawdown** : Analyse combien de temps le portefeuille reste en perte (max, moyenne, actuelle)
+* **Contribution au Risque** : Identifie quels actifs contribuent le plus au risque total (prend en compte les corrélations)
+* **Calmar Ratio** : Ratio rendement/drawdown maximum
+
+### Analyse IA Enrichie
+
+L'intelligence artificielle reçoit maintenant **3× plus de métriques quantitatives** pour générer des recommandations :
+
+* ✅ **Analyses chiffrées** : Chaque recommandation est justifiée par des données précises
+* ✅ **Recommendations actionnables** : Actions concrètes (ex: "Réduire AAPL de 55% → 40%")
+* ✅ **Impact estimé** : Prévision de l'impact de chaque changement
+* ✅ **Transparence totale** : Expander pour voir le prompt et les données envoyées à l'IA
+
+### Guide Rapide
+
+📚 **Documentation détaillée** :
+- [`QUICK_START_GUIDE.md`](QUICK_START_GUIDE.md) - Guide de démarrage rapide
+- [`IMPLEMENTATION_SUMMARY.md`](IMPLEMENTATION_SUMMARY.md) - Résumé complet des améliorations
+- [`CHANGELOG_IA_IMPROVEMENTS.md`](CHANGELOG_IA_IMPROVEMENTS.md) - Détails techniques
+
+🧪 **Tester les nouvelles fonctionnalités** :
+```bash
+python test_new_metrics.py  # Tests automatiques des métriques
+```
 
 ---
 
