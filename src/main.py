@@ -1,14 +1,11 @@
 import json
-import os
 from datetime import datetime
-from typing import Any
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-import yfinance as yf
 from dateutil.relativedelta import relativedelta
 
 from ai_analyzer import generate_portfolio_analysis as generate_ai_analysis
@@ -23,6 +20,7 @@ from calculations import (
 
 # Modules maison
 from data_manager import get_data, get_risk_free_rate, get_ticker_info
+from utils import build_metrics_for_ai
 
 # --- Configuration de la page ---
 st.set_page_config(layout="wide", page_title="Dashboard de Backtesting")
@@ -648,10 +646,16 @@ def render_allocation_diversification():
             # Try to map country names to ISO-3 codes to avoid future locationmode issues.
             geo_df_map = geo_df.copy()
             # Import pycountry locally to avoid hard dependency at module import time
-            try:
-                import pycountry
-            except Exception:
-                pycountry = None
+            import importlib.util
+
+            pycountry = None
+            if importlib.util.find_spec("pycountry") is not None:
+                try:
+                    import importlib
+
+                    pycountry = importlib.import_module("pycountry")
+                except Exception:
+                    pycountry = None
 
             def to_iso3(name):
                 if not pycountry:
@@ -1001,117 +1005,27 @@ def render_monte_carlo():
             )
 
 
-# --- IA ---
-
-
-def generate_portfolio_analysis(
-    portfolio_data: pd.DataFrame,
-    benchmark_data: pd.DataFrame,
-    metrics: dict[str, Any],
-    advanced_metrics: dict[str, Any],
-    period: str,
-    tickers_list: list[str],
-    weights: dict[str, float],
-    additional_context: dict[str, Any] | None = None,
-):
-    try:
-        from openai import OpenAI
-
-        # Prefer st.secrets (local Streamlit secrets) but fall back to environment variable for Docker
-        api_key = None
-        try:
-            api_key = st.secrets.get("OPENAI_API_KEY") if hasattr(st, "secrets") else None
-        except Exception:
-            api_key = None
-        if not api_key:
-            api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            return (
-                "Erreur IA: clé OpenAI non trouvée. Définissez OPENAI_API_KEY dans .streamlit/secrets.toml "
-                "ou passez-la en variable d'environnement au conteneur Docker (ex: `-e OPENAI_API_KEY=...`)."
-            )
-        client = OpenAI(api_key=api_key)
-        assets_details = {}
-        total_market_cap = 0
-        for ticker in tickers_list:
-            try:
-                info = yf.Ticker(ticker).info
-                mc = info.get("marketCap", 0)
-                total_market_cap += mc
-                assets_details[ticker] = {
-                    "poids": float(weights.get(ticker, 0)),
-                    "secteur": str(info.get("sectorKey", "Inconnu")),
-                    "industrie": str(info.get("industryKey", "Inconnu")),
-                    "pays": str(info.get("country", "Inconnu")),
-                    "capitalisation": int(mc) if mc else 0,
-                }
-            except Exception:
-                assets_details[ticker] = {
-                    "poids": float(weights.get(ticker, 0)),
-                    "secteur": "Inconnu",
-                    "industrie": "Inconnu",
-                    "pays": "Inconnu",
-                    "capitalisation": 0,
-                }
-        secteurs: dict[str, float] = {}
-        pays: dict[str, float] = {}
-        for _t, d in assets_details.items():
-            poids_val = float(str(d.get("poids", 0)))
-            secteurs[str(d["secteur"])] = secteurs.get(str(d["secteur"]), 0.0) + poids_val
-            pays[str(d["pays"])] = pays.get(str(d["pays"]), 0.0) + poids_val
-        drawdown_series = calculate_drawdown_series(portfolio_data)
-        drawdown_stats = {}
-        if not drawdown_series.empty:
-            dd_moy = (
-                drawdown_series[drawdown_series < 0].mean() if (drawdown_series < 0).any() else 0
-            )
-            drawdown_stats = {"drawdown_moyen": f"{dd_moy:.2%}"}
-        analysis_data = {
-            "periode": str(period),
-            "actifs": assets_details,
-            "metriques": {
-                "ret_total": f"{metrics['portfolio_simple']:.2%}",
-                "ret_ann": f"{metrics['portfolio_annual']:.2%}",
-                "vol": f"{metrics['portfolio_vol']:.2%}",
-                "sharpe": f"{metrics['portfolio_sharpe']:.2f}",
-                "alpha": f"{advanced_metrics['alpha']:.2%}",
-                "beta": f"{advanced_metrics['beta']:.2f}",
-            },
-            "diversification": {"secteurs": secteurs, "pays": pays},
-            "drawdown": drawdown_stats,
-        }
-        prompt = f"Analyse experte du portefeuille suivant en français:\n{json.dumps(analysis_data, ensure_ascii=False, indent=2)}\nFournir: Performance, Risques, Diversification, Recommandations concrètes."
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "Expert financier"},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=1200,
-            temperature=0.7,
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"Erreur IA: {e}"
+# IA: la génération d'analyse est externalisée dans `src/ai_analyzer.py`
+# Nous utilisons `generate_portfolio_analysis` importé depuis `ai_analyzer` (alias generate_ai_analysis)
 
 
 def render_ai_analysis():
     st.subheader("Analyse IA")
 
     # Préparer les données du prompt pour affichage AVANT génération
-    metrics_for_ai = {
-        "portfolio_simple": p_simple,
-        "portfolio_annual": p_annual,
-        "portfolio_vol": p_vol,
-        "portfolio_sharpe": p_sharpe,
-        "portfolio_drawdown": p_drawdown,
-        "portfolio_max_dd": p_drawdown,
-        "benchmark_total": b_total,
-        "benchmark_annual": b_annual,
-        "benchmark_vol": b_vol,
-        "benchmark_sharpe": b_sharpe,
-        "benchmark_drawdown": b_drawdown,
-    }
+
+    metrics_for_ai = build_metrics_for_ai(
+        p_simple,
+        p_annual,
+        p_vol,
+        p_sharpe,
+        p_drawdown,
+        b_total,
+        b_annual,
+        b_vol,
+        b_sharpe,
+        b_drawdown,
+    )
 
     # Afficher un aperçu du prompt qui SERA envoyé
     with st.expander("🔍 Aperçu du prompt qui sera envoyé à l'IA"):
